@@ -48,6 +48,8 @@ model_list:
       # This keeps secrets out of the config file
       api_key: os.environ/COMMANDCODE_API_KEY
 
+      order: 1
+
       # Optional: Set temperature (default is model-specific)
       # temperature: 0.7
 
@@ -80,12 +82,31 @@ model_list:
 
   - model_name: flash-tier
     litellm_params:
-      model: openrouter/qwen/qwen3.8-omni-flash
+      model: openai/qwen/qwen3.8-omni-flash
       api_base: https://api.commandcode.ai/provider/v1
       api_key: os.environ/COMMANDCODE_API_KEY
+      order: 1
     # Model metadata
     model_info:
       base_model: openrouter/qwen/qwen3.8-omni-flash
+
+  # ---------------------------------------------------------------------------
+  # FLASH TIER - DeepSeek V4 Flash  (fallback / rollover)
+  # ---------------------------------------------------------------------------
+  # This is order 2 (fallback). Order 1 contains V4.1 Flash and Qwen 3.8
+  # Omni Flash. Within order 1, cost-based-routing picks the cheapest.
+  # If both order 1 deployments fail, this order 2 deployment is used.
+  # See router_settings.routing_groups -> flash-cost-optimized below.
+  # ---------------------------------------------------------------------------
+  - model_name: flash-tier
+    litellm_params:
+      model: openai/deepseek/deepseek-v4-flash
+      api_base: https://api.commandcode.ai/provider/v1
+      api_key: os.environ/COMMANDCODE_API_KEY
+      order: 2
+    model_info:
+      # Maps to "deepseek/deepseek-v4-flash" in LiteLLM's cost map
+      base_model: deepseek/deepseek-v4-flash
 
 
 
@@ -118,12 +139,6 @@ model_list:
     model_info:
       # Maps to "openrouter/qwen/qwen3.7-plus" in LiteLLM's cost map
       base_model: openrouter/qwen/qwen3.7-plus
-
-router_settings:
-  routing_strategy: cost-based-routing # Literal["simple-shuffle", "least-busy", "usage-based-routing","latency-based-routing"], default="simple-shuffle"
-  model_group_alias: {"gpt-5.6-terra": "gpt-5.6-luna"} # all requests with `gpt-5.6-terra` will be routed to models with `gpt-5.6-luna`
-  num_retries: 2
-  timeout: 30   
 
 # =============================================================================
 # LITELLM SETTINGS
@@ -227,6 +242,40 @@ router_settings:
   # ---------------------------------------------------------------------------
   allowed_fails: 5
   cooldown_time: 60
+
+  # ---------------------------------------------------------------------------
+  # PER-MODEL ROUTING STRATEGIES (routing_groups)
+  # ---------------------------------------------------------------------------
+  # The global routing_strategy above applies to any model group NOT listed
+  # here. Each group below overrides the strategy for specific model_name
+  # values, so different tiers can behave differently.
+  # Docs: https://docs.litellm.ai/docs/routing#routing-groups
+  #
+  # flash-tier -> cost-based-routing:
+  #   Within order 1 (V4.1 Flash and Qwen 3.8 Omni Flash), picks the
+  #   CHEAPEST healthy deployment based on model_info / base_model pricing.
+  #   If both order 1 deployments fail, falls back to order 2 (V4 Flash).
+  #   Example: if V4.1 costs $0.15/M and Qwen costs $0.40/M, V4.1 is picked.
+  #   If V4.1 is down, Qwen is picked. If both are down, V4 Flash is used.
+  #
+  # pro-tier -> latency-based-routing:
+  #   Picks the FASTEST responding deployment in the pro-tier group
+  #   (DeepSeek V4 Pro / Qwen 3.7 Plus). Latency is measured from recent
+  #   request/response times. The lowest_latency_buffer: 0.5 means "consider
+  #   any deployment within 50% of the fastest", so the single fastest
+  #   deployment is not overwhelmed.
+  # ---------------------------------------------------------------------------
+  routing_groups:
+    - group_name: pro-latency-optimized
+      models: [pro-tier]
+      routing_strategy: latency-based-routing
+      routing_strategy_args:
+        lowest_latency_buffer: 0.5
+    - group_name: flash-cost-optimized
+      models: [flash-tier]
+      routing_strategy: cost-based-routing
+
+
 
   # ---------------------------------------------------------------------------
   # REDIS (for multi-instance deployments)
