@@ -1,0 +1,13 @@
+# Secrets / credentials - NEVER commit
+.env
+
+# Logs
+*.log
+
+# Podman/Docker local data
+postgres_data/
+redis_data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
