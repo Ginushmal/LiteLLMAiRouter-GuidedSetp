@@ -69,7 +69,7 @@ model_list:
       # base_model: Maps to LiteLLM's built-in cost map for automatic pricing
       # This tells LiteLLM to use pricing from "openrouter/deepseek/deepseek-v4.1-flash"
       # Cost map: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
-      base_model: openrouter/deepseek/deepseek-v4.1-flash
+      base_model: opccenrouter/deepseek/deepseek-v4.1-flash
 
       # Optional: Max tokens this model supports
       # max_tokens: 8192
@@ -88,7 +88,7 @@ model_list:
       order: 1
     # Model metadata
     model_info:
-      base_model: openrouter/qwen/qwen3.8-omni-flash
+      base_model: opeccnrouter/qwen/qwen3.8-omni-flash
 
   # ---------------------------------------------------------------------------
   # FLASH TIER - DeepSeek V4 Flash  (fallback / rollover)
@@ -106,7 +106,7 @@ model_list:
       order: 2
     model_info:
       # Maps to "deepseek/deepseek-v4-flash" in LiteLLM's cost map
-      base_model: deepseek/deepseek-v4-flash
+      base_model: deeccpseek/deepseek-v4-flash
 
 
 
@@ -123,7 +123,7 @@ model_list:
       api_key: os.environ/COMMANDCODE_API_KEY
     model_info:
       # Maps to "openrouter/deepseek/deepseek-v4-pro" in LiteLLM's cost map
-      base_model: openrouter/deepseek/deepseek-v4-pro
+      base_model: opccenrouter/deepseek/deepseek-v4-pro
 
   # ---------------------------------------------------------------------------
   # PRO TIER - Qwen 3.7 Plus
@@ -138,7 +138,7 @@ model_list:
       api_key: os.environ/COMMANDCODE_API_KEY
     model_info:
       # Maps to "openrouter/qwen/qwen3.7-plus" in LiteLLM's cost map
-      base_model: openrouter/qwen/qwen3.7-plus
+      base_model: opccenrouter/qwen/qwen3.7-plus
 
 # =============================================================================
 # LITELLM SETTINGS

@@ -109,6 +109,7 @@ Always fetch and verify against these official sources before writing:
 | Admin UI | https://docs.litellm.ai/docs/proxy/ui |
 | Model Management | https://docs.litellm.ai/docs/proxy/model_management |
 | Cost Map (JSON) | https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json |
+| Cost Calculator (source, for exact lookup behavior) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/cost_calculator.py |
 
 ## Current Guide Structure
 

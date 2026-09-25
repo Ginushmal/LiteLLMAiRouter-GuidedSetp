@@ -342,13 +342,26 @@ When an app requests `model: "pro-tier"`, LiteLLM load-balances between DeepSeek
 
 ### LiteLLM's Built-in Cost Map
 
-LiteLLM has a built-in cost map with pricing for many models:
+LiteLLM prices every request from a **cost map** — a JSON file mapping each model to per-token rates:
 - **File:** `model_prices_and_context_window.json`
 - **Source:** https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
 
+The proxy fetches it once at startup. `GET /model/cost_map/source` reports which map actually loaded.
+
+### Display vs Accounting Cost (Important)
+
+There are **two separate cost paths** that can disagree:
+
+| Path | What it uses | Where you see it |
+|------|--------------|------------------|
+| **Display** | `model_info` / `base_model` resolution | Admin UI "Models + Endpoints" page |
+| **Accounting** | cost-map lookup (candidate chain below) | Spend logs, budgets |
+
+**A price visible in the UI does not guarantee request cost is calculated.** Always confirm with a spend log.
+
 ### Using base_model for Automatic Pricing
 
-If your model is in the cost map, use `base_model` to map to it:
+`base_model` tells LiteLLM which cost-map entry to use when the deployment name or the provider's response name differs:
 
 ```yaml
 model_list:
@@ -359,11 +372,26 @@ model_list:
       base_model: openrouter/deepseek/deepseek-v4.1-flash  # Maps to cost map entry
 ```
 
-LiteLLM uses pricing from the cost map entry automatically.
+### How Cost Calculation Actually Works
 
-### Custom Pricing
+The cost lookup is a **candidate chain** — LiteLLM tries names in order and uses the **first that resolves to a non-empty cost-map entry**:
 
-If your model is NOT in the cost map, or you want to override pricing:
+```
+1. selected_model   (derived from base_model / custom pricing)
+2. response model   (the model name the provider returns)
+3. model            (the deployment's litellm_params.model)
+```
+
+Two consequences that are easy to miss:
+
+- **Empty entries are skipped.** An entry that exists but has no pricing (`{}`) is silently passed over.
+- **Every candidate is looked up through the deployment's provider prefix.** `base_model`'s own provider prefix is *not* honored (LiteLLM bug #22257). So a `base_model` with a different provider than the deployment (deployment `openai/...`, base_model `openrouter/...`) gets re-prefixed to `openai/...` and can miss.
+
+**Practical rule:** the most reliable way to price a custom deployment is to add a cost-map entry keyed by **exactly `litellm_params.model`**. Then candidate 3 always resolves and `base_model` becomes unnecessary.
+
+### Custom Pricing (per model, in config)
+
+If the model is NOT in the cost map, set explicit per-token prices:
 
 ```yaml
 model_list:
@@ -371,24 +399,37 @@ model_list:
     litellm_params:
       model: openai/custom-model
     model_info:
-      input_cost_per_token: 0.00000015      # $0.15 per million input tokens
-      output_cost_per_token: 0.0000006      # $0.60 per million output tokens
+      input_cost_per_token: 0.00000015          # $0.15 per million input tokens
+      output_cost_per_token: 0.0000006          # $0.60 per million output tokens
       cache_read_input_token_cost: 0.000000003  # $0.003 per million cache read tokens
 ```
 
 **Calculation:** `$X per million tokens` = `X / 1,000,000` per token
 
-### Custom Cost Map Source
+### Custom Cost Map Source (self-hosted)
 
-You can host your own cost map JSON and point LiteLLM to it:
+Host your own **full copy** of the map and point LiteLLM at it:
 
 ```bash
-export LITELLM_MODEL_COST_MAP_URL="https://your-host.example.com/model_prices.json"
+# Environment variable
+LITELLM_MODEL_COST_MAP_URL="https://your-host.example.com/custom_cost_map.json"
 ```
 
-- Fetched once at startup (5 second timeout)
-- URL must be HTTP(S); `file://` not supported
-- For offline: set `LITELLM_LOCAL_MODEL_COST_MAP=True` (uses bundled backup)
+| Rule | Detail |
+|------|--------|
+| **Full replacement, not a merge** | Start from the complete upstream file and edit inside it |
+| **Validation (silent)** | Needs ≥ **50** entries *and* ≥ **half** the bundled backup, or it is **discarded** |
+| **Tunable thresholds** | `MODEL_COST_MAP_MIN_MODEL_COUNT`, `MODEL_COST_MAP_MAX_SHRINK_RATIO` |
+| **Fetch** | Once at startup, 5s timeout; changes require a restart |
+| **On failure** | Falls back to the bundled backup **silently** (no crash) |
+| **URL** | HTTP(S) only; `file://` not supported |
+| **Offline alternative** | `LITELLM_LOCAL_MODEL_COST_MAP=True` uses the bundled backup |
+
+**Keys must match `litellm_params.model` exactly**, provider prefix included.
+
+> ⚠️ A small map containing only your models is **silently rejected** — LiteLLM keeps the default map. This is the most common reason a custom map "doesn't work."
+
+**Docs:** https://docs.litellm.ai/docs/proxy/custom_model_cost_map · https://docs.litellm.ai/docs/proxy/custom_pricing
 
 
 ---
@@ -755,6 +796,21 @@ spec:
 **Problem:** Mixing `openrouter/` and `openai/` prefixes for same provider.  
 **Solution:** Use consistent prefix matching your provider type.
 
+### 12. Request cost is $0 even though the UI shows a price
+
+**Problem:** Display and accounting use separate paths. A `base_model` whose provider differs from the deployment is re-prefixed during lookup and misses (bug #22257); empty cost-map entries are skipped silently.  
+**Solution:** Add a cost-map entry keyed by the exact `litellm_params.model`. Confirm with a spend log, not the UI.
+
+### 13. Custom cost map silently ignored
+
+**Problem:** A custom map with fewer than 50 entries (or less than half the bundled backup) is discarded without an error, so LiteLLM keeps the default map.  
+**Solution:** Fork the entire upstream map and edit inside it. Verify with `GET /model/cost_map/source` (`url` should be yours, `fallback_reason` null).
+
+### 14. New environment variables not applied
+
+**Problem:** `podman compose restart` reuses the old container spec, so new `.env` / compose env vars are not injected.  
+**Solution:** Use `podman compose up -d --force-recreate <service>` to recreate the container.
+
 ---
 
 ## 13. Quick Reference
@@ -768,8 +824,11 @@ podman compose -f docker-compose.quickstart.yml up -d
 # Stop
 podman compose -f docker-compose.quickstart.yml down
 
-# Restart proxy only
+# Restart proxy only (does NOT apply env-var / compose changes)
 podman compose -f docker-compose.quickstart.yml restart litellm
+
+# Apply env-var / compose changes (recreates the container)
+podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
 
 # View logs
 podman compose -f docker-compose.quickstart.yml logs -f litellm
@@ -809,6 +868,20 @@ podman volume rm litellm_postgres_data && \
 podman compose -f docker-compose.quickstart.yml up -d
 ```
 
+### Cost Map Diagnostics
+
+```bash
+# Which cost map is loaded? (source, url, fallback_reason, model_count)
+curl -s http://localhost:4000/model/cost_map/source -H "Authorization: Bearer $MASTER_KEY"
+
+# Inspect the effective map for a model's pricing
+curl -s http://localhost:4000/public/litellm_model_cost_map | \
+  python -c "import sys,json; print(json.load(sys.stdin).get('openai/deepseek/deepseek-v4.1-flash'))"
+
+# Check a request's actual cost (metadata.cost_breakdown, custom_llm_provider)
+curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
+```
+
 ### Documentation References
 
 | Topic | URL |
@@ -846,7 +919,9 @@ podman compose -f docker-compose.quickstart.yml up -d
 - `model_name` is an alias/group name for load balancing
 - `order` provides failover priority (deployment property)
 - `routing_groups` override strategy per model group
-- `base_model` maps to cost map for automatic pricing
+- Cost lookup is a candidate chain (base_model → response model → `litellm_params.model`); the reliable fix is to price the exact `litellm_params.model` key
+- Display cost (UI) and accounted cost (spend logs) are separate paths — verify with a spend log
+- Custom cost maps must be a **full copy** of the upstream map (small maps are silently rejected)
 - Database required for budgets, virtual keys, spend tracking
 
 **Production essentials:**
@@ -858,4 +933,4 @@ podman compose -f docker-compose.quickstart.yml up -d
 
 ---
 
-*Guide created from hands-on exploration and official documentation verification. Last updated: 2026-09-24*
+*Guide created from hands-on exploration and official documentation verification. Last updated: 2026-09-25*

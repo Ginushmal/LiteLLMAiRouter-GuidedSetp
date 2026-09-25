@@ -22,6 +22,11 @@ services:
       DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm
       STORE_MODEL_IN_DB: "True"
       COMMANDCODE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
+      # Custom cost map hosted in our public repo. Contains pricing keyed by our
+      # exact deployment model names (e.g. openai/deepseek/deepseek-v4.1-flash)
+      # so cost tracking works despite the base_model provider-prefix mismatch.
+      # Docs: https://docs.litellm.ai/docs/proxy/custom_model_cost_map
+      LITELLM_MODEL_COST_MAP_URL: ${LITELLM_MODEL_COST_MAP_URL:?set it in .env}
     depends_on:
       db:
         condition: service_healthy
