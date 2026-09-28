@@ -66,10 +66,10 @@ model_list:
 
     # Model metadata
     model_info:
-      # base_model: Maps to LiteLLM's built-in cost map for automatic pricing
-      # This tells LiteLLM to use pricing from "openrouter/deepseek/deepseek-v4.1-flash"
-      # Cost map: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
-      base_model: opccenrouter/deepseek/deepseek-v4.1-flash
+      # base_model matches the deployment's litellm_params.model exactly.
+      # Pricing comes from custom_cost_map.json, which is keyed by the exact
+      # litellm_params.model (see LITELLM_MODEL_COST_MAP_URL in docker-compose).
+      base_model: openai/deepseek/deepseek-v4.1-flash
 
       # Optional: Max tokens this model supports
       # max_tokens: 8192
@@ -88,7 +88,7 @@ model_list:
       order: 1
     # Model metadata
     model_info:
-      base_model: opeccnrouter/qwen/qwen3.8-omni-flash
+      base_model: openai/qwen/qwen3.8-omni-flash
 
   # ---------------------------------------------------------------------------
   # FLASH TIER - DeepSeek V4 Flash  (fallback / rollover)
@@ -105,8 +105,7 @@ model_list:
       api_key: os.environ/COMMANDCODE_API_KEY
       order: 2
     model_info:
-      # Maps to "deepseek/deepseek-v4-flash" in LiteLLM's cost map
-      base_model: deeccpseek/deepseek-v4-flash
+      base_model: openai/deepseek/deepseek-v4-flash
 
 
 
@@ -122,8 +121,7 @@ model_list:
       api_base: https://api.commandcode.ai/provider/v1
       api_key: os.environ/COMMANDCODE_API_KEY
     model_info:
-      # Maps to "openrouter/deepseek/deepseek-v4-pro" in LiteLLM's cost map
-      base_model: opccenrouter/deepseek/deepseek-v4-pro
+      base_model: openai/deepseek/deepseek-v4-pro
 
   # ---------------------------------------------------------------------------
   # PRO TIER - Qwen 3.7 Plus
@@ -137,8 +135,7 @@ model_list:
       api_base: https://api.commandcode.ai/provider/v1
       api_key: os.environ/COMMANDCODE_API_KEY
     model_info:
-      # Maps to "openrouter/qwen/qwen3.7-plus" in LiteLLM's cost map
-      base_model: opccenrouter/qwen/qwen3.7-plus
+      base_model: openai/qwen/qwen3.7-plus
 
 # =============================================================================
 # LITELLM SETTINGS
@@ -202,6 +199,50 @@ litellm_settings:
   # langfuse_secret_key: os.environ/LANGFUSE_SECRET_KEY
   # langfuse_public_key: os.environ/LANGFUSE_PUBLIC_KEY
   # langfuse_host: https://cloud.langfuse.com
+
+  # ---------------------------------------------------------------------------
+  # DEFAULT / UPPERBOUND KEY + TEAM PARAMS  (config-driven defaults)
+  # ---------------------------------------------------------------------------
+  # These do NOT create keys/teams - those are database entities. They set the
+  # defaults and hard bounds that every FUTURE key/team inherits, whether created
+  # via the Admin UI or the API (the UI calls the same endpoints).
+  # Docs: https://docs.litellm.ai/docs/proxy/virtual_keys#default-keygenerate-params
+  #
+  # default_key_generate_params
+  #   Fills any field that is missing or null on a /key/generate request.
+  #   Exception: an explicit "budget_duration": null skips the default.
+  #
+  # upperbound_key_generate_params
+  #   Hard ceilings. A request above a ceiling is REJECTED (HTTP 400), not clamped.
+  #   These also act as defaults when a field is omitted and cannot be opted out.
+  #
+  # default_team_params
+  #   Defaults applied to every new team (UI or /team/new). Its "models" list is
+  #   only auto-applied to SSO auto-created teams.
+  # ---------------------------------------------------------------------------
+  default_key_generate_params:
+    models: ["flash-cost-optimized"]
+    max_budget: 10
+    budget_duration: "30d"
+    duration: "90d"
+    rpm_limit: 60
+    tpm_limit: 100000
+
+  upperbound_key_generate_params:
+    max_budget: 100
+    budget_duration: "30d"
+    duration: "90d"
+    max_parallel_requests: 50
+    rpm_limit: 500
+    tpm_limit: 500000
+
+  default_team_params:
+    max_budget: 200
+    budget_duration: "30d"
+    rpm_limit: 500
+    tpm_limit: 500000
+    models: ["flash-tier", "pro-tier"]
+    team_member_permissions: ["/key/generate", "/key/info", "/key/list"]
 
 # =============================================================================
 # ROUTER SETTINGS

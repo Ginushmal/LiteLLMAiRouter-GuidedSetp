@@ -1,461 +1,454 @@
-# LiteLLM Setup Guide: Fresh Start with config.yaml
+# LiteLLM Setup Guide: From Zero to Teams & Keys
 
-> This guide walks you through resetting your LiteLLM database and setting up everything from scratch using the config.yaml file, API commands, and docker-compose.
-
----
-
-## Prerequisites
-
-- Podman (or Docker) installed and running
-- Your CommandCode Goat Subscription API key
-- The files in this directory:
-  - `docker-compose.quickstart.yml` (updated with config.yaml volume mount)
-  - `config.yaml` (model definitions with pricing)
-  - `.env` (environment variables)
+> The order this stack was actually built, step by step: config + Compose + Podman, then models + env, then the custom cost map, then routing (`order` + `routing_groups`), then identity (teams / users / keys).
+>
+> **No API calls are made by hand.** Everything is done through the four repo files and the **Admin UI**.
+>
+> **Concepts live in [LiteLLM-Learnings.md](./LiteLLM-Learnings.md).** This file is the *how*.
 
 ---
 
-## Step 1: Reset Database (Fresh Start)
+## What you end up with
 
-This wipes all existing data (teams, users, keys, models) from the Admin UI.
+Monolithic **Mode C (Hybrid)**: a database **and** a `config.yaml`.
 
-```powershell
-# Stop containers
-podman compose -f docker-compose.quickstart.yml down
+| Piece | Configured in | Managed via |
+|-------|---------------|-------------|
+| Models & routing | `config.yaml` | config.yaml (bootstrap); UI additions are **additive** |
+| Pricing | `custom_cost_map.json` (remote URL) | the file — keyed by **exact `litellm_params.model`** |
+| Teams / Users / Keys | database | **Admin UI** |
+| Budgets / rate limits / spend | database | **Admin UI** |
+| Secrets | `.env` | the file |
 
-# Remove the postgres volume (this wipes all data)
-podman volume rm litellm_postgres_data
+### Files
 
-# If the volume name is different, find it with:
-podman volume ls
+| File | Role |
+|------|------|
+| `docker-compose.quickstart.yml` | the two services (litellm + db) |
+| `config.yaml` | models, routing, defaults — mounted to `/app/config.yaml` |
+| `custom_cost_map.json` | full copy of LiteLLM's cost map + our CommandCode entries |
+| `.env` | secrets (gitignored) |
+
+---
+
+# Part 1 — Bring the stack up
+
+## Step 1 — Prerequisites
+
+- **Podman** (Desktop or CLI) with `podman compose`, running
+- A **CommandCode** Goat Subscription API key
+- A **public Git repo** (for hosting the custom cost map — a raw URL LiteLLM can fetch)
+
+---
+
+## Step 2 — Create `docker-compose.quickstart.yml`
+
+Two services: `litellm` (the gateway) and `db` (Postgres). The gateway is made **config-driven** by three lines: the `volumes` mount, `STORE_MODEL_IN_DB`, and `command`.
+
+```yaml
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config.yaml:/app/config.yaml        # <- makes config.yaml the bootstrap
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set it in .env}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set it in .env}
+      DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm
+      STORE_MODEL_IN_DB: "True"               # <- enables Admin UI model management + hybrid mode
+      # COMMANDCODE_API_KEY: ...              # added in Step 6
+      # LITELLM_MODEL_COST_MAP_URL: ...       # added in Step 8
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["--config", "/app/config.yaml"]  # <- run with the mounted config
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
 ```
 
-> **Note**: If you get "volume not found", the volume may have a different prefix. Run `podman volume ls` and look for a volume containing `postgres_data`.
+`${VAR:?message}` means Compose **requires** the variable in `.env` and stops with that message if it is missing.
+
+> Add the provider key and cost-map URL later (Steps 6 and 8) — this mirrors how we built it.
 
 ---
 
-## Step 2: Set Your API Key
-
-Edit `.env` and replace the placeholder with your actual CommandCode API key:
+## Step 3 — Create `.env`
 
 ```env
-LITELLM_MASTER_KEY=sk-7a213531c3a92bfbe95e3ea0cb4be35d6b7b8315ac1369c854bc63cd648049fe
-LITELLM_SALT_KEY=sk-b83301646edd9198fff63026c43ce2bba5b253760499691093a0f38e1f62038a
-
-# CommandCode Goat Subscription API Key
-# Get this from your CommandCode dashboard
-COMMANDCODE_API_KEY=sk-your-actual-key-from-commandcode
+LITELLM_MASTER_KEY=sk-<generate-me>
+LITELLM_SALT_KEY=sk-<generate-me>
 ```
 
-> **IMPORTANT**: Do NOT change `LITELLM_SALT_KEY` after you've added models. It encrypts provider credentials in the database. Changing it makes them unreadable.
+Generate the two LiteLLM keys (Git Bash / Linux / macOS):
+
+```bash
+printf 'LITELLM_MASTER_KEY=sk-%s\nLITELLM_SALT_KEY=sk-%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)"
+```
+
+> ⚠️ **Never change `LITELLM_SALT_KEY`** after credentials are stored — it encrypts them and they become unreadable.
+> ⚠️ `.env` is **gitignored**. Never paste real keys into tracked files.
 
 ---
 
-## Step 3: Start the Stack
+## Step 4 — Run the stack in Podman
 
 ```powershell
 podman compose -f docker-compose.quickstart.yml up -d
 ```
 
-Wait ~30 seconds for the database to initialize, then verify the proxy started:
+Wait ~30s for Postgres, then confirm:
 
 ```powershell
 podman compose -f docker-compose.quickstart.yml logs litellm
 ```
 
-You should see something like:
-```
-litellm  | INFO:     Uvicorn running on http://0.0.0.0:4000
-```
-
-Check health:
-```powershell
-curl http://localhost:4000/health/readiness
-```
+Expect `Uvicorn running on http://0.0.0.0:4000`. Then open **http://localhost:4000/ui** and sign in with `LITELLM_MASTER_KEY`.
 
 ---
 
-## Step 4: Create Team, User, and Virtual Key
+# Part 2 — Models and provider wiring
 
-### 4.1 Create Team "BA"
+## Step 5 — Add models to `config.yaml`
 
-```powershell
-$MASTER_KEY = "sk-7a213531c3a92bfbe95e3ea0cb4be35d6b7b8315ac1369c854bc63cd648049fe"
-
-curl -X POST http://localhost:4000/team/new `
-  -H "Authorization: Bearer $MASTER_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{"team_id": "BA", "team_alias": "BA Team"}'
-```
-
-**Expected response**:
-```json
-{
-  "team_id": "BA",
-  "key": "sk-...",
-  "team_alias": "BA Team"
-}
-```
-
-### 4.2 Create Internal User "Boo"
-
-```powershell
-curl -X POST http://localhost:4000/user/new `
-  -H "Authorization: Bearer $MASTER_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "user_id": "boo",
-    "user_email": "booboo192939@gmail.com",
-    "models": ["flash-tier", "pro-tier"]
-  }'
-```
-
-**Expected response**:
-```json
-{
-  "user_id": "boo",
-  "key": "sk-...",
-  "user_email": "booboo192939@gmail.com"
-}
-```
-
-### 4.3 Create Virtual Key for Boo under BA Team
-
-```powershell
-curl -X POST http://localhost:4000/key/generate `
-  -H "Authorization: Bearer $MASTER_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "user_id": "boo",
-    "team_id": "BA",
-    "duration": "30d",
-    "models": ["flash-tier", "pro-tier"]
-  }'
-```
-
-**Expected response**:
-```json
-{
-  "key": "sk-abc123...",
-  "key_name": "...",
-  "user_id": "boo",
-  "team_id": "BA",
-  "expires": "2026-10-24T..."
-}
-```
-
-> **SAVE THIS KEY** - it is only shown once. This is what your apps will use to make API calls.
-
-### 4.4 (Optional) Add Budget to the Key
-
-```powershell
-# First, get the key hash from the response above
-$KEY_HASH = "the-key-from-step-4.3"
-
-curl -X POST http://localhost:4000/key/update `
-  -H "Authorization: Bearer $MASTER_KEY" `
-  -H "Content-Type: application/json" `
-  -d "{
-    \"key\": \"$KEY_HASH\",
-    \"max_budget\": 50,
-    \"budget_duration\": \"1mo\"
-  }"
-```
-
----
-
-## Step 5: Test It
-
-### Test with Flash Tier
-
-```powershell
-$VIRTUAL_KEY = "sk-the-key-from-step-4.3"
-
-curl http://localhost:4000/v1/chat/completions `
-  -H "Authorization: Bearer $VIRTUAL_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "model": "flash-tier",
-    "messages": [{"role": "user", "content": "Hello! What model are you?"}]
-  }'
-```
-
-### Test with Pro Tier
-
-```powershell
-curl http://localhost:4000/v1/chat/completions `
-  -H "Authorization: Bearer $VIRTUAL_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "model": "pro-tier",
-    "messages": [{"role": "user", "content": "Hello! What model are you?"}]
-  }'
-```
-
-> **Note**: "pro-tier" will load-balance between DeepSeek V4 Pro and Qwen 3.7 Plus since both share the same `model_name`.
-
----
-
-## Step 6: Verify Spend Tracking
-
-```powershell
-# Check key spend
-curl "http://localhost:4000/key/info?key=$VIRTUAL_KEY" `
-  -H "Authorization: Bearer $MASTER_KEY"
-
-# Check user spend
-curl "http://localhost:4000/user/info?user_id=boo" `
-  -H "Authorization: Bearer $MASTER_KEY"
-
-# Check team spend
-curl "http://localhost:4000/team/info?team_id=BA" `
-  -H "Authorization: Bearer $MASTER_KEY"
-```
-
----
-
-## Step 7: Access Admin UI
-
-Open your browser to: **http://localhost:4000/ui**
-
-Log in with your master key: `sk-7a213531c3a92bfbe95e3ea0cb4be35d6b7b8315ac1369c854bc63cd648049fe`
-
-You should see:
-- **Models**: flash-tier, pro-tier (loaded from config.yaml)
-- **Virtual Keys**: The key you created for Boo
-- **Teams**: BA Team
-- **Users**: Boo
-
----
-
-## Understanding the Setup
-
-### What Lives Where
-
-| Component | Configured In | Managed Via |
-|-----------|--------------|-------------|
-| Models + Pricing | `config.yaml` | config.yaml (bootstrap) + Admin UI (additive) |
-| Teams | Database | API `/team/new` or Admin UI |
-| Users | Database | API `/user/new` or Admin UI |
-| Virtual Keys | Database | API `/key/generate` or Admin UI |
-| Routing | `config.yaml` | config.yaml (Admin UI overrides if changed there) |
-
-### Model Groups Explained
-
-In `config.yaml`, models with the same `model_name` are automatically load-balanced:
+Each entry in `model_list` is a **deployment**. Multiple entries with the **same `model_name`** form a load-balanced group.
 
 ```yaml
 model_list:
-  - model_name: pro-tier    # <-- Same name
+  - model_name: flash-tier            # the name apps request
     litellm_params:
-      model: openai/deepseek-v4-pro
-  - model_name: pro-tier    # <-- Same name
-    litellm_params:
-      model: openai/qwen3.7-plus
+      model: openai/deepseek/deepseek-v4.1-flash   # openai/<provider-model> for OpenAI-compatible APIs
+      api_base: https://api.commandcode.ai/provider/v1
+      api_key: os.environ/COMMANDCODE_API_KEY      # secret stays in .env
+      order: 1                                     # failover priority (Step 10)
+    model_info:
+      base_model: openai/deepseek/deepseek-v4.1-flash
 ```
 
-When an app requests `model: "pro-tier"`, LiteLLM will route to either DeepSeek V4 Pro or Qwen 3.7 Plus based on the routing strategy (default: simple-shuffle).
+Key rules:
 
-### Pricing Explained
+| Item | Meaning |
+|------|---------|
+| `model_name` | what your apps send (`model: "flash-tier"`) |
+| `openai/` prefix | use the OpenAI-compatible protocol; everything after it is sent to the provider |
+| `api_base` | the provider's endpoint |
+| `api_key: os.environ/…` | read the secret from the environment (never inline it) |
+| same `model_name` | the entries are load-balanced together |
+| `order` | failover priority (lower = tried first) |
 
-The `model_info` section sets custom pricing for cost tracking:
+This project defines **two groups** from five deployments:
+
+| Group | Deployments |
+|-------|-------------|
+| `flash-tier` | DeepSeek V4.1 Flash (order 1), Qwen 3.8 Omni Flash (order 1), DeepSeek V4 Flash (order 2) |
+| `pro-tier` | DeepSeek V4 Pro, Qwen 3.7 Plus |
+
+---
+
+## Step 6 — Wire the provider key into Compose
+
+`api_key: os.environ/COMMANDCODE_API_KEY` in `config.yaml` needs that variable inside the container. Add it to the `litellm` service environment, and to `.env`:
 
 ```yaml
-model_info:
-  base_model: deepseek-v4.1-flash
-  input_cost_per_token: 0.0000001   # $0.10 per million input tokens
-  output_cost_per_token: 0.0000002  # $0.20 per million output tokens
+    environment:
+      # ...
+      COMMANDCODE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
 ```
 
-- `base_model`: Used for pricing lookup (must match a known model or your custom definition)
-- `input_cost_per_token`: Cost per input token in USD
-- `output_cost_per_token`: Cost per output token in USD
+```env
+COMMANDCODE_API_KEY=sk-<your-commandcode-key>
+```
 
-**Calculation**: `$X per million tokens` = `X / 1,000,000` per token
+> Editing Compose/.env is a **container-spec change**, so apply it with `--force-recreate` (Step 7), not `restart`.
 
-Example: $0.10 per million = 0.10 / 1,000,000 = 0.0000001
+---
+
+## Step 7 — Apply and confirm
+
+```powershell
+podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+```
+
+In the Admin UI, open **Models + Endpoints** and confirm `flash-tier` and `pro-tier` are listed. (Missing? See Troubleshooting.)
+
+---
+
+# Part 3 — Pricing: the custom cost map
+
+## Step 8 — Build the custom cost map
+
+**Why:** CommandCode's models are not in LiteLLM's built-in pricing map, AND for a custom provider the reliable lookup key is the deployment's **exact `litellm_params.model`** (`openai/deepseek/deepseek-v4.1-flash`), provider prefix included.
+
+1. **Start from the full upstream map** (`model_prices_and_context_window.json`) and edit *inside* it — do **not** create a small map.
+2. **Add one entry per deployment**, keyed by the **exact `litellm_params.model`**:
+
+   ```json
+   "openai/deepseek/deepseek-v4.1-flash": {
+     "input_cost_per_token": 1.5e-7,
+     "output_cost_per_token": 6e-7,
+     "max_tokens": 1000000,
+     "mode": "chat",
+     "litellm_provider": "openai"
+   }
+   ```
+
+3. **Host the file publicly** (e.g. a `raw.githubusercontent.com` URL).
+4. Point LiteLLM at it — add to `.env` **and** the `litellm` environment in Compose:
+
+   ```env
+   LITELLM_MODEL_COST_MAP_URL=https://raw.githubusercontent.com/<user>/<repo>/main/custom_cost_map.json
+   ```
+
+5. Apply:
+
+   ```powershell
+   podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+   ```
+
+Cost-map rules:
+
+| Rule | Detail |
+|------|--------|
+| **Full copy, not a merge** | LiteLLM replaces the whole map; a small map (under ~50 entries / under half the bundled one) is **silently discarded** |
+| **Fetched once at startup** | changes require a **restart** to take effect |
+| **Must be reachable** | the URL must be public (HTTP/HTTPS); on failure it silently falls back to the built-in map |
+
+## Step 9 — Verify pricing
+
+Send a prompt in the **Playground**, then open **Usage / Logs** and check the request's **spend**:
+
+- **non-zero** → priced correctly.
+- **$0** → the map has no entry for the **exact** `litellm_params.model` (or the map was rejected). See Troubleshooting.
+
+> The price shown on the Models page is display-only. Always confirm with the request's spend.
+
+---
+
+# Part 4 — Routing
+
+## Step 10 — Failover with `order`
+
+`order` lives on each deployment in `litellm_params`. Lower = tried first; on failure, LiteLLM escalates to the next order.
+
+```yaml
+model_list:
+  - model_name: flash-tier
+    litellm_params:
+      model: openai/deepseek/deepseek-v4.1-flash
+      order: 1
+  - model_name: flash-tier
+    litellm_params:
+      model: openai/deepseek/deepseek-v4-flash
+      order: 2        # used only when order 1 is unavailable
+```
+
+## Step 11 — Per-model strategies with `routing_groups`
+
+Give each group its own strategy. `group_name` also becomes a **callable model** (it shows up in the UI picker).
+
+```yaml
+router_settings:
+  routing_strategy: simple-shuffle      # default for ungrouped models
+  num_retries: 3
+  timeout: 60
+  allowed_fails: 5
+  cooldown_time: 60
+  routing_groups:
+    - group_name: flash-cost-optimized
+      models: [flash-tier]
+      routing_strategy: cost-based-routing
+    - group_name: pro-latency-optimized
+      models: [pro-tier]
+      routing_strategy: latency-based-routing
+      routing_strategy_args:
+        lowest_latency_buffer: 0.5
+```
+
+Worked example (`flash-tier`):
+
+1. Order 1 has two deployments → `cost-based-routing` picks the cheaper one.
+2. If it fails (retries + cooldown), the other order-1 deployment is used.
+3. If both fail, escalate to order 2 (`deepseek-v4-flash`).
+
+After adding/changing this block: `restart litellm`.
+
+---
+
+# Part 5 — Identity defaults (in `config.yaml`)
+
+## Step 12 — Set key/team defaults and upperbounds
+
+These live under `litellm_settings`. They do **not** create teams/users/keys — they set what future ones inherit.
+
+```yaml
+litellm_settings:
+  default_key_generate_params:        # fill missing fields on new keys
+    models: ["flash-cost-optimized"]
+    max_budget: 10
+    budget_duration: "30d"
+    duration: "90d"
+
+  upperbound_key_generate_params:     # hard ceilings — over-limit is REJECTED
+    max_budget: 100
+    budget_duration: "30d"
+
+  default_team_params:                # applied to every new team
+    max_budget: 200
+    budget_duration: "30d"
+```
+
+- `default_*` **fills gaps**; `upperbound_*` **rejects** requests above the ceiling (it is not a clamp).
+- A key created with blank fields in the UI inherits these automatically.
+- Apply with `restart litellm`.
+
+---
+
+# Part 6 — Identity in the Admin UI
+
+## Step 13 — Log in
+
+**http://localhost:4000/ui** → sign in with `LITELLM_MASTER_KEY`.
+
+## Step 14 — Create Teams (Teams)
+
+Create one team per tier and set:
+
+- **Models** — the team's allowed list (pick the names the UI offers, e.g. `flash-cost-optimized`)
+- **Max budget** + **budget duration** — the shared pool
+- **Rate limits** — rpm / tpm / max_parallel_requests
+- **Team-member budget** — default per-person cap
+
+> **OSS note:** you cannot assign a team member as admin — that's Enterprise (*"Assigning admins is an enterprise-only feature."*). The proxy admin administers every team.
+
+## Step 15 — Create Users (Internal Users → + Invite User)
+
+| Field | Notes |
+|-------|-------|
+| User Email | becomes the `user_id` |
+| Global Proxy Role | `Internal User` (can create keys) or `Internal User (View Only)` |
+| Team | adds the user to a team with role **`user`** |
+| Personal Key Creation → Models | optional |
+
+There is **no budget field on the invite form.** After inviting, open the user's **edit page** to set **Max Budget (USD)** / Reset Budget / Personal Models.
+
+> A user's **personal budget is ignored** for keys that belong to a team — use the **team-member budget** instead.
+
+## Step 16 — Create Virtual Keys (Virtual Keys)
+
+On the Create Key form, set user, team, models, budget, duration. Notes:
+
+- Budget is **capped** by `upperbound_key_generate_params` (here $100) — over it is rejected.
+- A **blank models** field inherits `default_key_generate_params.models`.
+- The key value is **shown once** — copy it.
+- A team key can only reach **`key.models ∩ team.models`**.
+
+| Kind | How |
+|------|-----|
+| Personal | Create Key with a user, no team |
+| Team-member | Create Key with user **and** team |
+| **Service account** | **Virtual Keys → Service Account page** → a team key with `user_id: null` that survives user deletion |
+
+## Step 17 — Test and verify spend
+
+- Send a prompt in the **Playground** to confirm a model responds.
+- Open **Usage / Logs** and (after app traffic with a key) check that spend lands on the **key**, the **user**, and the **team**.
+
+---
+
+## Applying changes: restart vs. recreate
+
+| Change | Command |
+|--------|---------|
+| `config.yaml` (models, routing, defaults) | `podman compose -f docker-compose.quickstart.yml restart litellm` |
+| `.env` / `docker-compose.quickstart.yml` | `podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm` |
+| `custom_cost_map.json` (remote) | push, then `restart litellm` |
+
+> `restart` reuses the existing container spec, so **new environment variables are not applied**.
 
 ---
 
 ## Troubleshooting
 
-### "No pricing data found for this model"
+### Models not showing in the Admin UI
+1. Validate `config.yaml` (indentation-sensitive; no duplicate top-level blocks).
+2. `podman compose -f docker-compose.quickstart.yml restart litellm`
+3. `podman compose -f docker-compose.quickstart.yml logs litellm`
 
-This error occurs when `model_info` is missing or `base_model` doesn't match. Fix:
-1. Ensure every model in config.yaml has `model_info` with `input_cost_per_token` and `output_cost_per_token`
-2. Set `base_model` to a unique identifier for each model
+### Request cost is $0
+1. The deployment's **exact** `litellm_params.model` must have a map entry.
+2. The custom map must be a **full copy** of upstream (small maps are silently rejected).
+3. Confirm via the request's **spend**, not the listed price.
 
-### "Budgets not enforced"
+### A team key can call nothing
+`key.models` and `team.models` don't overlap. Use the **same names** on both — a routing-group name and its member name are **not** interchangeable.
 
-Budgets require a database. Verify:
-1. `DATABASE_URL` is set in docker-compose
-2. `STORE_MODEL_IN_DB=True` is set
-3. The database container is healthy
+### New environment variable has no effect
+`restart` doesn't inject new env vars. Use `up -d --force-recreate litellm`.
 
-### Models not showing in Admin UI
-
-Since `STORE_MODEL_IN_DB=True`, models from config.yaml are loaded at startup. If you don't see them:
-1. Check config.yaml syntax (YAML is indentation-sensitive)
-2. Restart the proxy: `podman compose -f docker-compose.quickstart.yml restart litellm`
-3. Check logs: `podman compose -f docker-compose.quickstart.yml logs litellm`
-
-### API key not working
-
-1. Verify the key is correct: `curl http://localhost:4000/health -H "Authorization: Bearer $VIRTUAL_KEY"`
-2. Check key expiration: Keys have a `duration` (e.g., "30d")
-3. Check key models: Ensure the requested model is in the key's allowed models list
+### Virtual key not working
+1. Not blocked / not expired (Virtual Keys page).
+2. Key's **models** allow-list includes the model.
+3. If the key is in a team, the **team** must allow it too.
 
 ---
 
-## Future Expansion
-
-### Add a New Model
-
-Add to `config.yaml`:
-
-```yaml
-  - model_name: new-model
-    litellm_params:
-      model: openai/new-model-name
-      api_base: https://api.commandcode.ai/provider/v1
-      api_key: os.environ/COMMANDCODE_API_KEY
-    model_info:
-      base_model: new-model-name
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000006
-```
-
-Then restart: `podman compose -f docker-compose.quickstart.yml restart litellm`
-
-### Add Fallbacks
-
-```yaml
-# In config.yaml, uncomment and modify:
-model_fallbacks:
-  - pro-tier: ["flash-tier"]  # If pro-tier fails, try flash-tier
-```
-
-### Add Rate Limits
-
-Per-team (when creating team):
-```powershell
-curl -X POST http://localhost:4000/team/new `
-  -H "Authorization: Bearer $MASTER_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "team_id": "BA",
-    "team_alias": "BA Team",
-    "tpm_limit": 100000,
-    "rpm_limit": 1000
-  }'
-```
-
-Per-key (when creating key):
-```powershell
-curl -X POST http://localhost:4000/key/generate `
-  -H "Authorization: Bearer $MASTER_KEY" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "user_id": "boo",
-    "team_id": "BA",
-    "tpm_limit": 50000,
-    "rpm_limit": 500
-  }'
-```
-
-### Add Caching
-
-Requires Redis. Add to docker-compose:
-
-```yaml
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-```
-
-Uncomment in config.yaml:
-```yaml
-litellm_settings:
-  cache: true
-  cache_params:
-    type: redis
-    host: redis
-    port: 6379
-```
-
-### Add Observability (Langfuse)
-
-Uncomment in config.yaml:
-```yaml
-litellm_settings:
-  success_callback: ["langfuse"]
-  failure_callback: ["langfuse"]
-
-environment_variables:
-  LANGFUSE_SECRET_KEY: sk-lf-...
-  LANGFUSE_PUBLIC_KEY: pk-lf-...
-  LANGFUSE_HOST: https://cloud.langfuse.com
-```
-
----
-
-## Documentation References
-
-| Topic | URL |
-|-------|-----|
-| Docker Quick Start | https://docs.litellm.ai/docs/proxy/docker_quick_start |
-| config.yaml Reference | https://docs.litellm.ai/docs/proxy/configs |
-| Config Settings Deep Dive | https://docs.litellm.ai/docs/proxy/config_settings |
-| Virtual Keys | https://docs.litellm.ai/docs/proxy/virtual_keys |
-| Teams | https://docs.litellm.ai/docs/proxy/team_based_routing |
-| Users & Budgets | https://docs.litellm.ai/docs/proxy/users |
-| Load Balancing | https://docs.litellm.ai/docs/proxy/load_balancing |
-| Routing Strategies | https://docs.litellm.ai/docs/routing |
-| Fallbacks | https://docs.litellm.ai/docs/routing/fallbacks |
-| Custom Pricing | https://docs.litellm.ai/docs/proxy/custom_pricing |
-| Caching | https://docs.litellm.ai/docs/caching/gpt_cache |
-| Guardrails | https://docs.litellm.ai/docs/proxy/guardrails |
-| Observability | https://docs.litellm.ai/docs/observability/callbacks |
-| Production Deployment | https://docs.litellm.ai/docs/proxy/deploy |
-| Admin UI | https://docs.litellm.ai/docs/proxy/ui |
-| Model Management | https://docs.litellm.ai/docs/proxy/model_management |
-
----
-
-## Quick Command Reference
+## Quick command reference
 
 ```powershell
-# Start
+# Start / stop
 podman compose -f docker-compose.quickstart.yml up -d
-
-# Stop
 podman compose -f docker-compose.quickstart.yml down
 
-# Restart proxy only
+# Reload config.yaml
 podman compose -f docker-compose.quickstart.yml restart litellm
 
-# View logs
+# Apply .env / compose changes
+podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+
+# Logs
 podman compose -f docker-compose.quickstart.yml logs -f litellm
 
-# Health check
-curl http://localhost:4000/health/readiness
-
-# List models
-curl http://localhost:4000/model/info -H "Authorization: Bearer $MASTER_KEY"
-
-# List keys
-curl http://localhost:4000/key/list -H "Authorization: Bearer $MASTER_KEY"
-
-# List teams
-curl http://localhost:4000/team/list -H "Authorization: Bearer $MASTER_KEY"
-
-# List users
-curl http://localhost:4000/user/list -H "Authorization: Bearer $MASTER_KEY"
-
-# Delete a key
-curl -X POST http://localhost:4000/key/delete -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" -d '{"keys": ["sk-key-to-delete"]}'
-
-# Reset everything
-podman compose -f docker-compose.quickstart.yml down && podman volume rm litellm_postgres_data && podman compose -f docker-compose.quickstart.yml up -d
+# Full reset (wipes DB)
+podman compose -f docker-compose.quickstart.yml down && `
+  podman volume rm litellm_postgres_data && `
+  podman compose -f docker-compose.quickstart.yml up -d
 ```
+
+**Admin UI map (http://localhost:4000/ui):**
+
+| Task | Where |
+|------|-------|
+| Models | Models + Endpoints |
+| Teams | Teams |
+| Users | Internal Users (+ Invite User) |
+| Personal / team keys | Virtual Keys |
+| Shared team keys | Virtual Keys → Service Account |
+| Spend / logs | Usage / Logs |
+
+---
+
+## Roadmap: what to study next
+
+1. **End-users vs internal users** — the `user` field on requests, `max_end_user_budget_id`.
+2. **Rate-limit layering** — tpm/rpm/max_parallel at key/team/user; per-model `model_rpm_limit`/`model_tpm_limit` (OSS).
+3. **Access groups** — `model_info.access_groups`.
+4. **Key lifecycle** — update / block / unblock / delete / expiry (rotation is Enterprise).
+5. **Spend reporting** — Usage / Logs views and per-model breakdown.
+
+Document confirmed findings in [LiteLLM-Learnings.md](./LiteLLM-Learnings.md).

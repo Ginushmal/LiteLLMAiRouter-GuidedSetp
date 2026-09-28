@@ -11,3 +11,4 @@ redis_data/
 # OS / editor
 .DS_Store
 Thumbs.db
+test_keys.txt

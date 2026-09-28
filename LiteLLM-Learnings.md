@@ -1,4 +1,4 @@
-# LiteLLM Complete Guide
+# LiteLLM Learnings
 
 > Comprehensive reference covering architecture, deployment, configuration, routing, and production use. For beginners and quick reference.
 
@@ -481,6 +481,23 @@ router_settings:
         lowest_latency_buffer: 0.5  # Consider any deployment within 50% of fastest
 ```
 
+### Routing Groups Are Also Callable "Virtual Models"
+
+A `group_name` is not just a label — it is **its own requestable model**:
+
+| Fact | Detail |
+|------|--------|
+| Callable | `model: "flash-cost-optimized"` → LiteLLM picks across the **union of all member deployments** using the group's strategy |
+| Listed | Group names appear in `GET /v1/models` and in the Admin UI model pickers |
+| Access control | Treated as **its own model name**. Grant `<group_name>` on a key/team to allow it. Membership is **not expanded**: a key granted only the group cannot call the member (`flash-tier`), and a key granted the member cannot call the group |
+| Name collision | A `group_name` must not equal an existing `model_name`/`model_group_alias` (config load rejects it) |
+| Membership | Each `model_name` may belong to **at most one** group (overlap raises `ValueError`) |
+| Spend logs | Record the **group name** as `model_group` (the row also shows the serving deployment) |
+
+> **When to use:** name a set of deployments that share a strategy, then grant that single name instead of listing every member. Remember access control treats the group and its members as *different* names.
+
+**Docs:** https://docs.litellm.ai/docs/routing#routing-groups
+
 ### Deployment Ordering (Failover via `order`)
 
 `order` is a **deployment property** in `model_list[*].litellm_params`:
@@ -552,71 +569,164 @@ model_fallbacks:
 
 ## 9. Virtual Keys, Teams & Users
 
-### Virtual Keys
+The identity layer: who can call the proxy, what they can reach, how their spend is capped, and where it is attributed.
 
-Virtual keys are what you give to applications and teammates instead of raw provider API keys. Each key can have:
-- Its own **budget** (spend limit)
-- Its own **rate limits** (requests per minute/day)
-- Its own **model access** (which models it can use)
-- Automatic **spend tracking**
+### Tenancy Hierarchy
 
-### Creating Virtual Keys
-
-**Via Admin UI:** Go to "Virtual Keys" > "+ Create New Key" > set name, budget, models > Create
-
-**Via API:**
-
-```bash
-curl -X POST http://localhost:4000/key/generate \
-  -H "Authorization: Bearer sk-your-master-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "duration": "30d",
-    "models": ["gpt-4o", "claude-3-sonnet"],
-    "max_budget": 50,
-    "budget_duration": "1mo"
-  }'
+```
+Organization                       ← Enterprise only
+  └── Team                         ← top boundary in open source
+        budget + models + rate limits
+        └── User (member)
+              └── Key
 ```
 
-### Teams
+- **Orgs ⊃ Teams ⊃ Users.** Both **Users and Teams own Keys.**
+- Every request's spend is attributed to **key + user + team (+ org) at once**, and budgets are checked at every level on the path.
+- **Orgs are Enterprise.** In OSS, **Teams are the top tenant boundary.**
 
-Create teams to group users and set shared budgets:
+| Relationship | How many |
+|--------------|----------|
+| Team → Users | many |
+| User → Teams | many (a user can be in several teams) |
+| User → Keys | many |
+| Team → Keys | many |
+| Key → `user_id` | at most one (or none) |
+| Key → `team_id` | at most one (or none) |
 
-```bash
-curl -X POST http://localhost:4000/team/new \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"team_id": "BA", "team_alias": "BA Team"}'
+### Three Kinds of Key
+
+| Type | `user_id` | `team_id` | Limits applied | Use case |
+|------|-----------|-----------|----------------|----------|
+| **Personal** | the user | — | user + key | one individual |
+| **Team-member** | the user | the team | user + team-member + team + key | engineer inside a team |
+| **Service account** | **`null`** | **required** | **team only** | shared/production key; survives user deletion; immutable `service_account_id` |
+
+- In the Admin UI, a service account is created from its **own page** (`Virtual Keys → Service Account`). The normal **Create Key** flow, used by an admin, stamps **`default_user_id`** as the owner — that is **not** a service account.
+- Deleting a user deletes the keys **they personally own**; team service-account keys survive.
+
+### Roles
+
+| Role | Scope | Can |
+|------|-------|-----|
+| `proxy_admin` | platform | everything |
+| `proxy_admin_viewer` | platform | view all keys/spend (no create/delete) |
+| `internal_user` | platform | manage **own** keys, view own spend |
+| `internal_user_viewer` | platform | view own keys/spend only |
+| `org_admin` | one org | **Enterprise** |
+| `team_admin` | one team | manage team members/keys; may **lower** (not raise) the team budget |
+
+> **OSS limitation:** assigning a team member as `admin` is **Enterprise** — the UI rejects it with *"Assigning admins is an enterprise-only feature."* In OSS the **proxy admin is the admin of every team**.
+
+### Model Access — How It Combines
+
+**Rule: model access is an AND / narrowing operation.** A key must pass every applicable check.
+
+| `models` value | Means |
+|----------------|-------|
+| `[]` (empty) or `["*"]` | **all** models on the proxy |
+| `["flash-tier"]` | that model group only |
+| `["openai/*"]` | wildcard, matched against `model_name` |
+| `["my-group"]` | **access group** (`model_info.access_groups`) — expands at auth time |
+| `["all-proxy-models"]` | explicit "everything" |
+| `["all-team-models"]` | defer to the team's list |
+| `["no-default-models"]` | (user only) deny everything outside a team |
+
+| Key has `team_id`? | Effective access |
+|--------------------|------------------|
+| No (standalone) | the key's own `models` list (owner's list applies on top) |
+| Yes | **`key.models ∩ team.models`** (the intersection) |
+
+| Sentinel | Key | Team | User |
+|----------|:--:|:----:|:----:|
+| `all-proxy-models` | ✅ | ✅ | ✅ |
+| `all-team-models` | ✅ only | ❌ | ❌ |
+| `no-default-models` | ❌ | ❌ | ✅ only |
+
+- Rejections name the layer that blocked: `key` / `team` / `user` / `org` `not allowed to access model…`.
+- The **master key bypasses every model and budget check.**
+
+### Budgets — How They Combine
+
+**Rule: budgets are independent caps.** All applicable layers are checked, spend is attributed to all of them, and the **first one exhausted blocks**.
+
+| Layer | Set on | Standalone key | Team-attached key |
+|-------|--------|:--------------:|:-----------------:|
+| Key | key `max_budget` | ✅ | ✅ (still enforced) |
+| User (personal) | user `max_budget` | ✅ | ❌ **ignored** |
+| Team | team `max_budget` | — | ✅ |
+| Team-member | `max_budget_in_team` | — | ✅ |
+| Global | `litellm_settings.max_budget` | ✅ | ✅ |
+| Per-model | `model_max_budget` | 🔒 Enterprise | 🔒 Enterprise |
+
+- If a key has a `team_id`, its owner's **personal budget is not enforced** — use the **team-member budget** for a per-person cap.
+- Errors name the layer: `Budget has been exceeded! Key=… / TeamMember=… / Team=…` or `ExceededBudget: User=…`.
+- Budgets require a database; without one the global budget **fails open**.
+
+### Config-Driven Defaults (all three layers)
+
+Defaults/bounds applied to objects created later, via **UI or API**:
+
+| Setting | Layer | Behaviour |
+|---------|-------|-----------|
+| `litellm_settings.default_key_generate_params` | Key | fills missing/`null` fields on key creation (an explicit `budget_duration: null` is honoured) |
+| `litellm_settings.upperbound_key_generate_params` | Key | hard ceilings — **over-limit is rejected, not clamped**; also act as defaults |
+| `litellm_settings.default_team_params` | Team | applied to every new team (`models` is auto-applied to SSO teams only) |
+| `litellm_settings.max_internal_user_budget` + `internal_user_budget_duration` | User | default budget for internal users (not applied to team keys) |
+| `litellm_settings.default_internal_user_params` | User | default role/budget/models for new (esp. SSO) users |
+
+```yaml
+litellm_settings:
+  default_key_generate_params:
+    models: ["flash-cost-optimized"]
+    max_budget: 10
+    budget_duration: "30d"
+    duration: "90d"
+  upperbound_key_generate_params:
+    max_budget: 100          # requests over this are rejected (HTTP 400)
+    budget_duration: "30d"
 ```
 
-### Users
+> **Verified:** a key created with blank fields in the Admin UI inherits these defaults (models, budget, duration, expiry), and an over-limit budget is **rejected**.
 
-Create internal users:
+### Key Lifecycle
 
-```bash
-curl -X POST http://localhost:4000/user/new \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "boo",
-    "user_email": "booboo192939@gmail.com",
-    "models": ["flash-tier", "pro-tier"]
-  }'
-```
+| Action | Where | OSS? |
+|--------|-------|:----:|
+| Create | Virtual Keys → Create Key | ✅ |
+| Update (budget/expiry/models/alias) | `/key/update` | ✅ |
+| Block / Unblock | `/key/block`, `/key/unblock` | ✅ |
+| Delete | `/key/delete` | ✅ |
+| Expiry | `duration` field | ✅ |
+| Create service account | Virtual Keys → Service Account page | ✅ |
+| **Rotate / regenerate** | `/key/{key}/regenerate` | 🔒 **Enterprise** |
 
-### Assigning Keys to Teams/Users
+**Rotation without Enterprise:** create a new key, deploy it, then block/delete the old one. Team-level settings (budget, models, rate limits) live on the **team** and carry over; only **key-level** settings must be re-specified.
 
-```bash
-curl -X POST http://localhost:4000/key/generate \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "boo",
-    "team_id": "BA",
-    "duration": "30d",
-    "models": ["flash-tier", "pro-tier"]
-  }'
-```
+### Admin UI — What the Forms Actually Have
+
+| Screen | Fields |
+|--------|--------|
+| **Invite User** | Email (becomes `user_id`), Global Proxy Role, Team (added as `user`), Organization, Metadata, Send invite, Personal Key Creation → Models. **No budget field.** |
+| **User edit** | User Alias, role, Personal Models (incl. *No Default Models*), **Max Budget (USD)**, Reset Budget, **Per-Model Budgets** (marked *Premium feature*), MCP/Access Groups |
+| **Create Key** | user/team, models, budget (capped by the upperbound), duration |
+| **Service Account** | separate page → `user_id: null`, team-scoped key |
+
+### Enterprise vs OSS (Identity Layer)
+
+| Capability | OSS | Enterprise |
+|------------|:--:|:----------:|
+| Teams, users, virtual keys | ✅ | ✅ |
+| Key / user / team / team-member budgets | ✅ | ✅ |
+| Model access, sentinels, access groups | ✅ | ✅ |
+| Service accounts | ✅ | ✅ |
+| Rate limits (incl. per-model rpm/tpm) | ✅ | ✅ |
+| Organizations / `org_admin` | ❌ | ✅ |
+| Assign team admins | ❌ | ✅ |
+| Per-model budgets (`model_max_budget`) | ❌ | ✅ |
+| Key rotation/regenerate, SSO/SAML | ❌ | ✅ |
+
+**Docs:** https://docs.litellm.ai/docs/proxy/virtual_keys · https://docs.litellm.ai/docs/proxy/users · https://docs.litellm.ai/docs/proxy/service_accounts · https://docs.litellm.ai/docs/proxy/access_control · https://docs.litellm.ai/docs/proxy/key_auth_arch
 
 ### Spend Tracking
 
@@ -811,6 +921,21 @@ spec:
 **Problem:** `podman compose restart` reuses the old container spec, so new `.env` / compose env vars are not injected.  
 **Solution:** Use `podman compose up -d --force-recreate <service>` to recreate the container.
 
+### 15. A key created by an admin in the UI is NOT a service account
+
+**Problem:** the normal "Create Key" flow stamps `default_user_id` (the proxy admin) as the owner, so the key is user-owned — not team-scoped.  
+**Solution:** create team-shared keys from the dedicated **Service Account** page (or `/key/service-account/generate`), which sets `user_id: null`.
+
+### 16. Expecting to assign team admins in OSS
+
+**Problem:** setting a team member's role to `admin` fails with *"Assigning admins is an enterprise-only feature."*  
+**Solution:** in OSS the proxy admin administers every team. Per-team admin delegation is Enterprise.
+
+### 17. Leaving a key/team `models` list empty
+
+**Problem:** an empty `models` list means **all models on the proxy**, not "none".  
+**Solution:** set an explicit allow-list (and/or `no-default-models` on users) for least privilege.
+
 ---
 
 ## 13. Quick Reference
@@ -862,6 +987,13 @@ curl -X POST http://localhost:4000/key/generate \
 curl "http://localhost:4000/key/info?key=<virtual-key>" \
   -H "Authorization: Bearer $MASTER_KEY"
 
+# Block / unblock a key
+curl -X POST http://localhost:4000/key/block -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" -d '{"key":"<virtual-key>"}'
+curl -X POST http://localhost:4000/key/unblock -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" -d '{"key":"<virtual-key>"}'
+
+# Create a team service-account key (user_id = null)
+curl -X POST http://localhost:4000/key/service-account/generate -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" -d '{"team_id":"BA","models":["flash-tier"]}'
+
 # Reset everything
 podman compose -f docker-compose.quickstart.yml down && \
 podman volume rm litellm_postgres_data && \
@@ -903,6 +1035,12 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 | Production Deployment | https://docs.litellm.ai/docs/proxy/deploy |
 | Admin UI | https://docs.litellm.ai/docs/proxy/ui |
 | Model Management | https://docs.litellm.ai/docs/proxy/model_management |
+| Service Accounts | https://docs.litellm.ai/docs/proxy/service_accounts |
+| Access Control (RBAC) | https://docs.litellm.ai/docs/proxy/access_control |
+| Model Access Groups | https://docs.litellm.ai/docs/proxy/model_access_groups |
+| Key-Based Auth (model resolution) | https://docs.litellm.ai/docs/proxy/key_auth_arch |
+| Internal User Self-Serve | https://docs.litellm.ai/docs/proxy/self_serve |
+| Multi-Tenant Architecture | https://docs.litellm.ai/docs/proxy/multi_tenant_architecture |
 
 ---
 
@@ -923,6 +1061,11 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 - Display cost (UI) and accounted cost (spend logs) are separate paths — verify with a spend log
 - Custom cost maps must be a **full copy** of the upstream map (small maps are silently rejected)
 - Database required for budgets, virtual keys, spend tracking
+- Identity: **Org ⊃ Team ⊃ User**; Users and Teams own Keys; a key belongs to a user, a team, or both
+- Model access = **`key.models ∩ team.models`** (AND/narrowing); **empty `models` means all models**
+- Budgets are **independent caps** — the first exhausted layer blocks; a user's personal budget is **ignored for team keys**
+- **Routing groups are callable "virtual models"** and are distinct from their member model names for access control
+- Service accounts are team-scoped keys with `user_id: null` (created from their own UI page)
 
 **Production essentials:**
 - Pin image versions
@@ -933,4 +1076,4 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 
 ---
 
-*Guide created from hands-on exploration and official documentation verification. Last updated: 2026-09-25*
+*Guide created from hands-on exploration and official documentation verification. Last updated: 2026-09-28*
