@@ -14,8 +14,9 @@ Read `AGENTS.md` first. The non-negotiables apply here too: **never assume**, ve
 |------|------|
 | `D:\Softwares\LiteLLMAiRouter\LiteLLM-Learnings.md` | **Learnings / concept reference** — how/why LiteLLM works |
 | `D:\Softwares\LiteLLMAiRouter\Setup-Guide.md` | **Step-by-step setup** — files + Admin UI, no hand-written API calls |
+| `D:\Softwares\LiteLLMAiRouter\ROADMAP.md` | **Master study checklist** — tick items as they are completed |
 
-A learning usually lands in **both**: the concept goes into `LiteLLM-Learnings.md`, and any new setup step / command goes into `Setup-Guide.md`.
+A learning usually lands in **both**: the concept goes into `LiteLLM-Learnings.md`, and any new setup step / command goes into `Setup-Guide.md`. Progress is recorded in `ROADMAP.md`.
 
 ## Shared Rules (both files)
 
@@ -112,7 +113,8 @@ It is the practical counterpart to `LiteLLM-Learnings.md`: keep the *why* in the
 5. **Mirror new gotchas into Troubleshooting** — keep them aligned with `LiteLLM-Learnings.md`'s Common Pitfalls.
 6. **If a config file changed**, update every place the guide quotes it (compose, `config.yaml`, `.env`, cost map).
 7. **Update the Roadmap** only if a studied topic suggests a concrete next step.
-8. **Note what changed** in your response.
+8. **Tick `ROADMAP.md`** — mark the matching study item(s) `[x]` in `ROADMAP.md`. Do this **in the same session** the topic is studied and logged; do not leave it stale. If the topic is not yet on the checklist, add it under the right track first.
+9. **Note what changed** in your response.
 
 ### Do NOT
 
@@ -136,6 +138,7 @@ Before finishing any update, verify:
 - [ ] **Setup-Guide.md:** every new action was actually performed and works
 - [ ] **Setup-Guide.md:** step numbering and Part order intact
 - [ ] **Setup-Guide.md:** reference tables (env vars, files, commands, UI map) still accurate
+- [ ] **ROADMAP.md:** matching study item(s) ticked `[x]` (or added, if the topic was not on the checklist)
 - [ ] Code examples are syntactically valid YAML/bash
 - [ ] Consistent formatting with existing sections (tables, code blocks, headers)
 - [ ] Sections are self-contained (readable without prior context)
@@ -202,4 +205,8 @@ Chronological runbook — files + Admin UI only (no hand-written API calls):
 8. Applying changes: restart vs. recreate
 9. Troubleshooting
 10. Quick command reference (Podman + Admin UI map)
-11. Roadmap: what to study next
+11. Roadmap: what to study next (points to `ROADMAP.md`)
+
+### `ROADMAP.md`
+
+Hierarchical checklist of all study topics, grouped into 16 tracks, with `[x]`/`[ ]` checkboxes and OSS/ENT tier tags. Tracks 1-4 and 16 are complete; 5-7 are partial; 8-14 are open. Keep it in sync whenever a topic is studied.

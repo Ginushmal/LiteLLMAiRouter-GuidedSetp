@@ -107,7 +107,14 @@ model_list:
     model_info:
       base_model: openai/deepseek/deepseek-v4-flash
 
-
+  - model_name: ds-v4-flash
+    litellm_params:
+      model: openai/deepseek/deepseek-v4-flash
+      api_base: https://api.commandcode.ai/provider/v1
+      api_key: os.environ/COMMANDCODE_API_KEY
+      order: 2
+    model_info:
+      base_model: openai/deepseek/deepseek-v4-flash
 
   # ---------------------------------------------------------------------------
   # PRO TIER - DeepSeek V4 Pro
@@ -136,6 +143,18 @@ model_list:
       api_key: os.environ/COMMANDCODE_API_KEY
     model_info:
       base_model: openai/qwen/qwen3.7-plus
+
+
+  - model_name: smart-router
+    litellm_params:
+      model: auto_router/complexity_router
+      complexity_router_config:
+        tiers:
+          SIMPLE:    flash-tier
+          MEDIUM:    openai/deepseek/deepseek-v4-flash
+          COMPLEX:   openai/qwen/qwen3.7-plus
+          REASONING: pro-latency-optimized
+      complexity_router_default_model: flash-tier
 
 # =============================================================================
 # LITELLM SETTINGS
@@ -315,7 +334,6 @@ router_settings:
     - group_name: flash-cost-optimized
       models: [flash-tier]
       routing_strategy: cost-based-routing
-
 
 
   # ---------------------------------------------------------------------------

@@ -65,6 +65,7 @@ The practical "do this, then this" runbook to stand the stack up, **in the order
 |------|---------|
 | `LiteLLM-Learnings.md` | Concept reference (our learning notes) |
 | `Setup-Guide.md` | Step-by-step setup runbook (files + Admin UI; no hand-written API calls) |
+| `ROADMAP.md` | Master study checklist — what is done and what is next |
 | `config.yaml` | Model/routing config, heavily commented for learning |
 | `docker-compose.quickstart.yml` | Local stack (LiteLLM + Postgres) |
 | `custom_cost_map.json` | Self-hosted cost map (full fork of upstream + our prices) |
@@ -79,6 +80,7 @@ The practical "do this, then this" runbook to stand the stack up, **in the order
 - When investigating, form a hypothesis → **test it** → report only the confirmed reason.
 - Don't change or fix the user's config/setup unless explicitly asked — investigate and report first.
 - When you do fix something, first understand and confirm the **root cause**, then log the learning in `LiteLLM-Learnings.md`.
+- **Update `ROADMAP.md` in the same session** a study topic is completed — tick the matching checkbox (and note the date/track if useful). It is the project's progress tracker; do not let it go stale.
 - The comments in `config.yaml` are intentional teaching material — preserve them.
 
 ## Reference Links

@@ -445,10 +445,12 @@ podman compose -f docker-compose.quickstart.yml down && `
 
 ## Roadmap: what to study next
 
-1. **End-users vs internal users** — the `user` field on requests, `max_end_user_budget_id`.
-2. **Rate-limit layering** — tpm/rpm/max_parallel at key/team/user; per-model `model_rpm_limit`/`model_tpm_limit` (OSS).
-3. **Access groups** — `model_info.access_groups`.
-4. **Key lifecycle** — update / block / unblock / delete / expiry (rotation is Enterprise).
-5. **Spend reporting** — Usage / Logs views and per-model breakdown.
+The full study checklist lives in [ROADMAP.md](./ROADMAP.md) — every topic, done and pending, is tracked there. Immediate next steps:
 
-Document confirmed findings in [LiteLLM-Learnings.md](./LiteLLM-Learnings.md).
+1. **End-users vs internal users** — the `user` field on requests, `max_end_user_budget_id`. (ROADMAP 6.11)
+2. **Rate-limit layering** — tpm/rpm/max_parallel at key/team/user; per-model `model_rpm_limit`/`model_tpm_limit` (OSS). (ROADMAP 6.12)
+3. **Access groups** — `model_info.access_groups`. (ROADMAP 6.13)
+4. **Key lifecycle** — update / block / unblock / delete / expiry (rotation is Enterprise). (ROADMAP 6.14)
+5. **Spend reporting** — Usage / Logs views and per-model breakdown. (ROADMAP 7.3)
+
+Document confirmed findings in [LiteLLM-Learnings.md](./LiteLLM-Learnings.md), then tick the matching items in [ROADMAP.md](./ROADMAP.md).

@@ -446,6 +446,8 @@ LITELLM_MODEL_COST_MAP_URL="https://your-host.example.com/custom_cost_map.json"
 | `cost-based-routing` | Cheapest deployment | Cost-sensitive |
 | `usage-based-routing` | Lowest TPM usage | Even rate-limit spread (needs Redis, slow) |
 
+<img src="image.jpg" alt="alt text" width="300" />
+
 ### How They Compose (Layered)
 
 ```
