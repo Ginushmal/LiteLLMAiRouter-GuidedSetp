@@ -155,6 +155,7 @@ Always fetch and verify against these official sources before writing:
 | config.yaml Reference | https://docs.litellm.ai/docs/proxy/configs |
 | Config Settings | https://docs.litellm.ai/docs/proxy/config_settings |
 | Routing | https://docs.litellm.ai/docs/routing |
+| Fallbacks / Provider Failover | https://docs.litellm.ai/docs/proxy/reliability |
 | Load Balancing | https://docs.litellm.ai/docs/proxy/load_balancing |
 | Virtual Keys | https://docs.litellm.ai/docs/proxy/virtual_keys |
 | Users & Budgets | https://docs.litellm.ai/docs/proxy/users |
@@ -172,6 +173,13 @@ Always fetch and verify against these official sources before writing:
 | Multi-Tenant Architecture | https://docs.litellm.ai/docs/proxy/multi_tenant_architecture |
 | Cost Map (JSON) | https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json |
 | Cost Calculator (source, for exact lookup behavior) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/cost_calculator.py |
+| Router (source: retries, failover, `order` filtering, weighted failover) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router.py |
+| Utils (source: `should_retry`, `get_order_filtered_deployments`) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/utils.py |
+| Router utils: fallback event handlers (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/fallback_event_handlers.py |
+| Router utils: cooldown handlers (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/cooldown_handlers.py |
+| Router utils: routing groups (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/routing_groups.py |
+| Router strategy: lowest cost (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_strategy/lowest_cost.py |
+| Router strategy: lowest latency (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_strategy/lowest_latency.py |
 
 ## Current Structure
 

@@ -95,7 +95,10 @@ model_list:
   # ---------------------------------------------------------------------------
   # This is order 2 (fallback). Order 1 contains V4.1 Flash and Qwen 3.8
   # Omni Flash. Within order 1, cost-based-routing picks the cheapest.
-  # If both order 1 deployments fail, this order 2 deployment is used.
+  # This order-2 deployment is used once the order-1 attempts fail (after
+  # num_retries) - the router escalates tier by tier and does NOT try the
+  # other order-1 deployment first. Qwen serves only once V4.1 is cooled
+  # down (> allowed_fails failures) or filtered out.
   # See router_settings.routing_groups -> flash-cost-optimized below.
   # ---------------------------------------------------------------------------
   - model_name: flash-tier
@@ -288,7 +291,11 @@ router_settings:
   # ---------------------------------------------------------------------------
   # RETRIES & TIMEOUTS
   # ---------------------------------------------------------------------------
-  # num_retries: How many times to retry on failure (default: 0)
+  # num_retries: Router-level retry attempts per model group.
+  #   (default: 2 = openai.DEFAULT_MAX_RETRIES when unset; NOT 0)
+  #   Distinct from the provider SDK's max_retries, which the router pins to
+  #   0 so retries are not multiplied. Retries re-run the routing strategy;
+  #   they do NOT exclude the failed deployment for retryable errors.
   # timeout: Request timeout in seconds (default: None)
   # ---------------------------------------------------------------------------
   num_retries: 3
@@ -297,8 +304,11 @@ router_settings:
   # ---------------------------------------------------------------------------
   # FAILURE HANDLING
   # ---------------------------------------------------------------------------
-  # allowed_fails: Number of failures before cooling down a deployment
-  # cooldown_time: Seconds to wait before retrying a failed deployment
+  # allowed_fails: A deployment is cooled down after MORE than this many
+  #   failures in the window (default: 3). Cooldown protects FUTURE requests,
+  #   not the current one - one request chain cannot trip it.
+  # cooldown_time: Seconds a deployment stays cooled down once tripped
+  #   (default: 5). While cooled down it is excluded from deployment picks.
   # ---------------------------------------------------------------------------
   allowed_fails: 5
   cooldown_time: 60
@@ -314,9 +324,19 @@ router_settings:
   # flash-tier -> cost-based-routing:
   #   Within order 1 (V4.1 Flash and Qwen 3.8 Omni Flash), picks the
   #   CHEAPEST healthy deployment based on model_info / base_model pricing.
-  #   If both order 1 deployments fail, falls back to order 2 (V4 Flash).
   #   Example: if V4.1 costs $0.15/M and Qwen costs $0.40/M, V4.1 is picked.
-  #   If V4.1 is down, Qwen is picked. If both are down, V4 Flash is used.
+  #
+  #   FAILURE SEMANTICS (verified against litellm/router.py, not intuition):
+  #   A single failure on V4.1 does NOT re-pick Qwen. num_retries re-runs
+  #   cost-based-routing, which deterministically returns the SAME cheapest
+  #   deployment - for retryable errors (429/5xx/timeout) the failed
+  #   deployment is NOT excluded. After retries are exhausted the router
+  #   escalates to the next ORDER tier (V4 Flash), SKIPPING the same-tier
+  #   Qwen. Qwen only receives traffic once V4.1 is cooled down (fails >
+  #   allowed_fails in the window) or is filtered out (tpm/rpm limits).
+  #   For a strict V4.1 -> Qwen -> V4 Flash chain, give each deployment its
+  #   OWN order (1/2/3 ranked by cost); the routing strategy then has one
+  #   candidate per tier and no longer chooses.
   #
   # pro-tier -> latency-based-routing:
   #   Picks the FASTEST responding deployment in the pro-tier group

@@ -244,7 +244,7 @@ Send a prompt in the **Playground**, then open **Usage / Logs** and check the re
 
 ## Step 10 — Failover with `order`
 
-`order` lives on each deployment in `litellm_params`. Lower = tried first; on failure, LiteLLM escalates to the next order.
+`order` lives on each deployment in `litellm_params`. Lower = tried first. On failure at an order, after `num_retries` are exhausted, LiteLLM escalates to the next order — it does **not** try another deployment that shares the same order.
 
 ```yaml
 model_list:
@@ -255,8 +255,10 @@ model_list:
   - model_name: flash-tier
     litellm_params:
       model: openai/deepseek/deepseek-v4-flash
-      order: 2        # used only when order 1 is unavailable
+      order: 2        # tried after the order-1 attempts fail (not "both")
 ```
+
+> **Gotcha:** with two deployments in order 1 and a deterministic strategy like `cost-based-routing`, a failure re-picks the *same* deployment on every retry and then escalates to order 2 — the order-1 sibling is skipped. Same-tier failover needs `enable_weighted_failover` (which requires `simple-shuffle`).
 
 ## Step 11 — Per-model strategies with `routing_groups`
 
@@ -283,8 +285,14 @@ router_settings:
 Worked example (`flash-tier`):
 
 1. Order 1 has two deployments → `cost-based-routing` picks the cheaper one.
-2. If it fails (retries + cooldown), the other order-1 deployment is used.
-3. If both fail, escalate to order 2 (`deepseek-v4-flash`).
+2. If it fails, retries re-run cost-based → the **same** (cheaper) deployment is
+   re-picked; it is **not** swapped for the other order-1 deployment.
+3. After retries are exhausted, escalate to order 2 (`deepseek-v4-flash`).
+4. The order-1 sibling takes over only after the failing deployment is cooled
+   down (> `allowed_fails` failures) on subsequent requests.
+
+For a strict "cheapest → next → backup" chain, give each deployment its own
+`order` (1/2/3, ranked by cost).
 
 After adding/changing this block: `restart litellm`.
 

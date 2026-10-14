@@ -455,15 +455,34 @@ Request for "flash-tier"
         │
    1. Resolve model group      → all deployments with model_name: flash-tier
         │
-   2. Split by `order`         → priority tiers (failover). Lower = tried first
+   2. Filter by `order`        → keep only the MIN order among healthy
+        │                        deployments (lower = higher priority)
         │
-   3. Routing strategy         → pick ONE within the current tier
-        │                        (simple-shuffle / cost-based / latency-based)
+   3. Routing strategy         → pick ONE candidate from that tier
+        │                        (simple-shuffle = random; cost-based is
+        │                         deterministic → always the cheapest)
         │
-   4. num_retries + cooldown   → failed deployment excluded, re-pick
+   4. Failure                  → retries re-run step 3 (num_retries times).
+        │                        For retryable errors (429/5xx/timeout) the
+        │                        failed deployment is NOT excluded, so
+        │                        cost-based re-picks the SAME one. Cooldown
+        │                        only removes it after > allowed_fails
+        │                        failures (across requests, not in one chain).
         │
-   5. Fallbacks                → if ALL tiers fail, switch to a DIFFERENT group
+   5. After retries exhausted  → escalate to the next `order` tier - only if
+        │                        the group has ≥2 distinct order values - and
+        │                        SKIP any untried same-tier sibling
+        │
+   6. Fallbacks                → if every tier fails, switch to a DIFFERENT
+                                 group (only if `fallbacks` is configured);
+                                 otherwise the original error is raised
 ```
+
+> **Key gotcha:** the routing strategy only *selects* — it is not a failover
+> chain. There is no built-in "on failure, try the next deployment in the same
+> tier". Same-tier failover exists only via `enable_weighted_failover`
+> (`simple-shuffle` only, async) or after cooldown filters the broken
+> deployment. See §12 pitfall 18.
 
 ### routing_groups (Per-Model Strategies)
 
@@ -502,7 +521,7 @@ A `group_name` is not just a label — it is **its own requestable model**:
 
 ### Deployment Ordering (Failover via `order`)
 
-`order` is a **deployment property** in `model_list[*].litellm_params`:
+`order` is a **deployment property** in `model_list[*].litellm_params` (or `model_info`):
 
 ```yaml
 model_list:
@@ -513,13 +532,19 @@ model_list:
   - model_name: flash-tier
     litellm_params:
       model: openai/deepseek/deepseek-v4-flash
-      order: 2        # Only used when order:1 fails
+      order: 2        # Used after the order-1 attempts fail
 ```
 
-**How it works:**
+**How it works (verified against `litellm/router.py`):**
 - Lower value = higher priority
+- Order filtering runs **before** the routing strategy: only the **minimum order** among currently healthy deployments is eligible
 - Deployments sharing the same `order` are picked by the routing strategy
-- On failure at order N, escalates to order N+1
+- On failure at order N, after `num_retries` are exhausted, the router escalates to order N+1. Each tier gets its **own** retry budget
+- The order hop only happens when the group has **≥2 distinct order values**. With no `order`, or a single level, there is no order-based failover
+- `ContextWindowExceededError` / `ContentPolicyViolationError` skip order-based failover (they have dedicated fallbacks)
+
+**What same-tier failover does NOT do:**
+Within one `order` tier there is **no automatic sibling failover**. When the picked deployment fails, `num_retries` re-runs selection; for retryable errors (429/5xx/timeout) the failed deployment is **not excluded**, so a deterministic strategy (`cost-based-routing`) re-picks the **same** deployment every attempt. The router then escalates to the **next order tier**, skipping the untried sibling. (The one exception: 401/403 auth errors — the failed deployment *is* excluded, so a sibling can be picked.)
 
 ### Example: cost-based-routing + order
 
@@ -539,6 +564,9 @@ model_list:
       order: 2
 
 router_settings:
+  num_retries: 3
+  allowed_fails: 5
+  cooldown_time: 60
   routing_groups:
     - group_name: flash-cost-optimized
       models: [flash-tier]
@@ -546,17 +574,30 @@ router_settings:
 ```
 
 **Scenario 1: All endpoints working**
-- Order 1: {V4.1, Qwen} → cost-based picks cheapest (say V4.1 at $0.15/M)
+- Order 1: {V4.1, Qwen} → cost-based picks cheapest (V4.1 at $0.15/M)
 - **V4.1 Flash responds**
 
-**Scenario 2: V4.1 is down**
+**Scenario 2: V4.1 fails a request**
 - Order 1: {V4.1, Qwen} → cost-based picks V4.1 (cheaper)
-- V4.1 fails → retries 3 times → all fail → V4.1 cooled down
-- Re-pick from Order 1: {Qwen} → **Qwen Flash responds**
+- V4.1 fails → retries re-run cost-based → **V4.1 again** (×num_retries)
+- Retries exhausted → escalate to **Order 2: {V4 Flash}** → **V4 Flash responds**
+- Qwen (order 1) is **never tried** in this request. It only gets traffic on
+  later requests once V4.1 is cooled down (> `allowed_fails` failures) or otherwise filtered out.
 
-**Scenario 3: Both V4.1 and Qwen are down**
-- Order 1: {V4.1, Qwen} → both fail and cool down
-- Escalate to Order 2: {V4} → **V4 Flash responds**
+**Scenario 3: V4.1 keeps failing across requests**
+- After V4.1 exceeds `allowed_fails` (5) failures in the window, it is cooled
+  down for `cooldown_time` (60s) and excluded from picks
+- Later requests: cost-based now picks **Qwen** (order 1)
+- If both order-1 deployments are cooled down → escalate to order 2 (V4 Flash)
+
+### Failover Options (how to get "try X, then Y, then Z")
+
+| Goal | Config |
+|------|--------|
+| Strict priority chain (cheapest → … → backup) | unique `order` per deployment (`1`/`2`/`3`, ranked by cost). Each tier has one candidate, so the routing strategy no longer chooses |
+| Dynamic cost pick **with** same-tier failover | `routing_strategy: simple-shuffle` + `enable_weighted_failover: true` (re-picks in the group, excluding the failed deployment) — **not** compatible with cost/latency strategies (they return early) |
+| Dynamic cost pick, **no** same-tier failover | cost/latency strategy + shared `order` tier. The broken deployment takes over only after cooldown (`allowed_fails`) |
+| Escape to another group | `fallbacks: [{"flash-tier": ["pro-tier"]}]` |
 
 ### Fallbacks (Different Model Groups)
 
@@ -937,6 +978,11 @@ spec:
 
 **Problem:** an empty `models` list means **all models on the proxy**, not "none".  
 **Solution:** set an explicit allow-list (and/or `no-default-models` on users) for least privilege.
+
+### 18. Expecting same-order deployments to fail over to each other
+
+**Problem:** with two deployments sharing a model name and the same `order` (or no `order` at all), a failure of the picked deployment does **not** make the router try the sibling. Retries re-run the routing strategy; for retryable errors (429/5xx/timeout) the failed deployment is **not** excluded, so `cost-based-routing` re-picks the same cheapest one every attempt. After retries are exhausted the router escalates to the next `order` tier (only if the group has ≥2 distinct orders) or the generic `fallbacks` (only if configured) — with neither, the request just fails.  
+**Solution:** for a deterministic "X → Y → Z" chain give each deployment its own `order` (rank by cost). For same-tier failover use `enable_weighted_failover: true` **with** `routing_strategy: simple-shuffle` (it is ignored for cost/latency strategies). Lower `allowed_fails` so cooldown shifts traffic to a healthy sibling faster. Note `enable_weighted_failover` defaults to **false** and order-based failover needs **≥2 distinct** `order` values.
 
 ---
 
