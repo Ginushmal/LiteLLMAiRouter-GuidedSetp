@@ -22,18 +22,43 @@ model_list:
     litellm_params:
       model: auto_router/complexity_router
       complexity_router_config:
+        # Ascending severity. Each name is what the Jev classifier returns; each
+        # description is the criteria it weighs when picking a tier.
+        tier_definitions:
+          - name: LITE
+            description: >-
+              Basic non-math, non-programming requests needing little or no reasoning:
+              greetings, small talk, short factual lookups, rewriting, summarizing, and
+              everyday questions with known or simple answers.
+          - name: FLASH
+            description: >-
+              Direct instruction following and simple programming: straightforward code
+              edits, short scripts, formatting, translation, data extraction, and ordinary
+              tasks that are not math-heavy or deeply complex.
+          - name: PRO
+            description: >-
+              Somewhat complex programming, mathematics, problem solving, and complex
+              brainstorming or exploration: multi-step reasoning, algorithm design, and
+              debugging non-trivial code.
+          - name: ULTRA
+            description: >-
+              The highest-complexity reasoning: extremely hard problems, security
+              vulnerability analysis, extreme problem solving, and very complex or
+              system-level programming and architecture.
         tiers:
-          SIMPLE:    flash-lite-tier
-          MEDIUM:    flash-tier
-          COMPLEX:   pro-tier
-          REASONING: ultra-tier
+          LITE:  flash-lite-tier
+          FLASH: flash-tier
+          PRO:   pro-tier
+          ULTRA: ultra-tier
+        # The heuristic scorer cannot produce custom tiers, so a custom tier set uses
+        # fallback_tier (its own fallback) instead of classifier_fallback: heuristic.
+        fallback_tier: FLASH
         classifier_type: jev
         jev_classifier_config:
           model: jev-latest
           timeout_ms: 3000
           circuit_breaker_enabled: true
           circuit_breaker_cooldown_seconds: 30
-        classifier_fallback: heuristic
       complexity_router_default_model: flash-tier
 
 litellm_settings:
