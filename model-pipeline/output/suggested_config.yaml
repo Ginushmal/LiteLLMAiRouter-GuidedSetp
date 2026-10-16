@@ -1,0 +1,92 @@
+# Suggested task-profile values derived from provider docs.
+# Review and copy into config.yaml if they differ from your workload.
+# This file is advisory only; the pipeline never applies it automatically.
+
+note: Derived from provider-published per-request estimates (26 samples). Review before
+  copying into config.yaml.
+samples:
+- fresh_input: 390
+  cached_input: 32500
+  output: 120
+- fresh_input: 1000
+  cached_input: 55000
+  output: 200
+- fresh_input: 700
+  cached_input: 52000
+  output: 150
+- fresh_input: 1000
+  cached_input: 50000
+  output: 220
+- fresh_input: 1000
+  cached_input: 50000
+  output: 220
+- fresh_input: 1100
+  cached_input: 55000
+  output: 240
+- fresh_input: 1050
+  cached_input: 76500
+  output: 300
+- fresh_input: 870
+  cached_input: 55000
+  output: 200
+- fresh_input: 920
+  cached_input: 88900
+  output: 200
+- fresh_input: 1000
+  cached_input: 55000
+  output: 200
+- fresh_input: 410
+  cached_input: 71300
+  output: 310
+- fresh_input: 750
+  cached_input: 82000
+  output: 290
+- fresh_input: 510
+  cached_input: 56000
+  output: 190
+- fresh_input: 300
+  cached_input: 55000
+  output: 125
+- fresh_input: 620
+  cached_input: 71400
+  output: 300
+- fresh_input: 620
+  cached_input: 71400
+  output: 300
+- fresh_input: 830
+  cached_input: 71500
+  output: 295
+- fresh_input: 790
+  cached_input: 86000
+  output: 305
+- fresh_input: 830
+  cached_input: 71500
+  output: 295
+- fresh_input: 790
+  cached_input: 86000
+  output: 305
+- fresh_input: 420
+  cached_input: 66000
+  output: 200
+- fresh_input: 600
+  cached_input: 58000
+  output: 200
+- fresh_input: 500
+  cached_input: 57000
+  output: 190
+- fresh_input: 830
+  cached_input: 71500
+  output: 295
+- fresh_input: 830
+  cached_input: 71500
+  output: 295
+- fresh_input: 1000
+  cached_input: 55000
+  output: 200
+task_profile:
+  per_request:
+    input: 756
+    cached: 64269
+    output: 236
+  cache_hit_rate: 0.9884
+  input_output_ratio: 275.128

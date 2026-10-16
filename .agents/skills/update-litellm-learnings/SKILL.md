@@ -88,7 +88,7 @@ The guide must satisfy TWO audiences simultaneously:
 
 ### What it is
 
-The runnable "do this, then this" guide to stand the stack up from scratch, **in the order the stack was actually built**. It covers the four repo files (`config.yaml`, `docker-compose.quickstart.yml`, `.env`, `custom_cost_map.json`) **and the Admin UI**.
+The runnable "do this, then this" guide to stand the stack up from scratch, **in the order the stack was actually built**. It covers the four repo files (`config.yaml`, `docker-compose.yml`, `.env`, `custom_cost_map.json`) **and the Admin UI**.
 
 **Core rule: no hand-written API/endpoint calls.** A reader must be able to follow it using only the files and the Admin UI — no `curl`, no hand-crafted HTTP requests. The only shell commands allowed are Podman/Compose commands to run and inspect the stack.
 
@@ -204,7 +204,7 @@ Always fetch and verify against these official sources before writing:
 Chronological runbook — files + Admin UI only (no hand-written API calls):
 
 1. What you end up with (stack + files)
-2. Part 1 — Bring the stack up (prerequisites → `docker-compose.quickstart.yml` → `.env` → run in Podman)
+2. Part 1 — Bring the stack up (prerequisites → `docker-compose.yml` → `.env` → run in Podman)
 3. Part 2 — Models + provider wiring (`config.yaml` `model_list` + Compose env)
 4. Part 3 — Custom cost map (build the file + verify pricing in the UI)
 5. Part 4 — Routing (`order` failover + `routing_groups`)

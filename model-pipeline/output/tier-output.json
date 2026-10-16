@@ -1,0 +1,1301 @@
+{
+  "generated_at": "2026-10-16T06:02:39+00:00",
+  "sota_intelligence": 57.6,
+  "parameters": {
+    "tier_floors": {
+      "Ultra": 0.8,
+      "Pro": 0.6,
+      "Flash": 0.35,
+      "Flash Lite": 0.0
+    },
+    "tier_lambdas": {
+      "Ultra": 1.0,
+      "Pro": 0.2,
+      "Flash": 0.005,
+      "Flash Lite": 0.0005
+    },
+    "latency_penalty_mu": 0.0,
+    "top_k_per_tier": 5,
+    "task_profile": {
+      "cache_hit_rate": 0.98,
+      "input_output_ratio": 4.0,
+      "requests_per_task": 5
+    }
+  },
+  "cost_methods": {
+    "aa_free": 21,
+    "task_profile": 2
+  },
+  "pareto": {
+    "frontier_count": 12,
+    "dominated_count": 63,
+    "note": "advisory only \u2014 dominated models are ranked, not dropped"
+  },
+  "excluded": {
+    "excluded_by_config": [
+      "commandcode:meta/muse-spark-1.2-contributor",
+      "commandcode:meta/muse-spark-1.3-contributor",
+      "opencode:gemini-4-argon-contributor"
+    ],
+    "unmapped": [
+      "commandcode:Qwen/Qwen3.8-Omni-Flash",
+      "commandcode:Qwen/Qwen3.7-Flash",
+      "commandcode:tencent/hy4-preview",
+      "commandcode:sakana/fugu-ultra",
+      "commandcode:nvidia/nemotron-3.5-super-vl",
+      "commandcode:stealth/glyph-cluster:free",
+      "commandcode:stealth/cat-jam:free",
+      "commandcode:poolside/laguna-s-2.1-free",
+      "opencode:hy4-preview",
+      "opencode:space-bunny",
+      "opencode:longcat-2.5-preview-free",
+      "opencode:cat-jam-free"
+    ]
+  },
+  "tiers": [
+    {
+      "name": "Ultra",
+      "model_group": "ultra-tier",
+      "floor_intelligence": 46.080000000000005,
+      "floor_frac": 0.8,
+      "lam": 1.0,
+      "pool_size": 14,
+      "backup_count": 0,
+      "deployments": [
+        {
+          "canonical_slug": "claude-opus-5-5",
+          "canonical_name": "Claude Opus 5.5 (Max, Default Fallback)",
+          "provider": "commandcode",
+          "model_id": "claude-opus-5-5",
+          "display_name": "Claude Opus 5.5",
+          "endpoint_type": "messages",
+          "api_base": "https://api.commandcode.ai/provider",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 57.6,
+          "cost_per_task": 3.5067813333333335,
+          "cost_method": "aa_free",
+          "nmb": 54.093218667,
+          "tier": "Ultra",
+          "model_group": "ultra-tier",
+          "order": 1,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 4.0,
+            "output": 20.0,
+            "cache_read": 0.2,
+            "cache_write": 5.0,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "ultra-tier",
+            "litellm_params": {
+              "model": "anthropic/claude-opus-5-5",
+              "api_base": "https://api.commandcode.ai/provider",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 1,
+              "input_cost_per_token": 4e-06,
+              "output_cost_per_token": 2e-05,
+              "cache_read_input_token_cost": 2.0000000000000002e-07,
+              "cache_creation_input_token_cost": 5e-06
+            },
+            "model_info": {
+              "id": "mp::ultra-tier::commandcode::claude-opus-5-5",
+              "base_model": "anthropic/claude-opus-5-5",
+              "provider": "commandcode",
+              "model_group": "ultra-tier",
+              "provider_model_name": "Claude Opus 5.5",
+              "max_input_tokens": 1000000
+            }
+          }
+        },
+        {
+          "canonical_slug": "claude-sonnet-5-5",
+          "canonical_name": "Claude Sonnet 5.5 (Max, Default Fallback)",
+          "provider": "commandcode",
+          "model_id": "claude-sonnet-5-5",
+          "display_name": "Claude Sonnet 5.5",
+          "endpoint_type": "messages",
+          "api_base": "https://api.commandcode.ai/provider",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 56,
+          "cost_per_task": 3.2013009333333335,
+          "cost_method": "aa_free",
+          "nmb": 52.798699067,
+          "tier": "Ultra",
+          "model_group": "ultra-tier",
+          "order": 2,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.1,
+            "cache_write": 2.5,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "ultra-tier",
+            "litellm_params": {
+              "model": "anthropic/claude-sonnet-5-5",
+              "api_base": "https://api.commandcode.ai/provider",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 2,
+              "input_cost_per_token": 2e-06,
+              "output_cost_per_token": 1e-05,
+              "cache_read_input_token_cost": 1.0000000000000001e-07,
+              "cache_creation_input_token_cost": 2.5e-06
+            },
+            "model_info": {
+              "id": "mp::ultra-tier::commandcode::claude-sonnet-5-5",
+              "base_model": "anthropic/claude-sonnet-5-5",
+              "provider": "commandcode",
+              "model_group": "ultra-tier",
+              "provider_model_name": "Claude Sonnet 5.5",
+              "max_input_tokens": 1000000
+            }
+          }
+        },
+        {
+          "canonical_slug": "gemini-4-argon",
+          "canonical_name": "Gemini 4 Argon (High)",
+          "provider": "commandcode",
+          "model_id": "google/gemini-4-argon",
+          "display_name": "Gemini 4 Argon",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 52.6,
+          "cost_per_task": 1.166758088888889,
+          "cost_method": "aa_free",
+          "nmb": 51.433241911,
+          "tier": "Ultra",
+          "model_group": "ultra-tier",
+          "order": 3,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.1,
+            "cache_write": 2,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "aa_fallback"
+            }
+          },
+          "litellm_params": {
+            "model_name": "ultra-tier",
+            "litellm_params": {
+              "model": "openai/google/gemini-4-argon",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 3,
+              "input_cost_per_token": 2e-06,
+              "output_cost_per_token": 1e-05,
+              "cache_read_input_token_cost": 1.0000000000000001e-07
+            },
+            "model_info": {
+              "id": "mp::ultra-tier::commandcode::google/gemini-4-argon",
+              "base_model": "openai/google/gemini-4-argon",
+              "provider": "commandcode",
+              "model_group": "ultra-tier",
+              "provider_model_name": "Gemini 4 Argon",
+              "max_input_tokens": 1000000
+            }
+          }
+        },
+        {
+          "canonical_slug": "gpt-6-1-sol",
+          "canonical_name": "GPT-6.1 Sol (Max)",
+          "provider": "commandcode",
+          "model_id": "gpt-6.1-sol",
+          "display_name": "GPT-6.1 Sol",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1050000,
+          "intelligence": 51.8,
+          "cost_per_task": 0.4245421333333333,
+          "cost_method": "aa_free",
+          "nmb": 51.375457866999994,
+          "tier": "Ultra",
+          "model_group": "ultra-tier",
+          "order": 4,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.1,
+            "cache_write": 2.5,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "ultra-tier",
+            "litellm_params": {
+              "model": "openai/gpt-6.1-sol",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 4,
+              "input_cost_per_token": 2e-06,
+              "output_cost_per_token": 1e-05,
+              "cache_read_input_token_cost": 1.0000000000000001e-07,
+              "cache_creation_input_token_cost": 2.5e-06
+            },
+            "model_info": {
+              "id": "mp::ultra-tier::commandcode::gpt-6.1-sol",
+              "base_model": "openai/gpt-6.1-sol",
+              "provider": "commandcode",
+              "model_group": "ultra-tier",
+              "provider_model_name": "GPT-6.1 Sol",
+              "max_input_tokens": 1050000
+            }
+          }
+        },
+        {
+          "canonical_slug": "gpt-6-astra",
+          "canonical_name": "GPT-6 Astra (Max)",
+          "provider": "commandcode",
+          "model_id": "gpt-6-astra",
+          "display_name": "GPT-6 Astra",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1050000,
+          "intelligence": 52.7,
+          "cost_per_task": 1.9805599999999999,
+          "cost_method": "aa_free",
+          "nmb": 50.719440000000006,
+          "tier": "Ultra",
+          "model_group": "ultra-tier",
+          "order": 5,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 10.0,
+            "output": 50.0,
+            "cache_read": 1.0,
+            "cache_write": 12.5,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "ultra-tier",
+            "litellm_params": {
+              "model": "openai/gpt-6-astra",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 5,
+              "input_cost_per_token": 1e-05,
+              "output_cost_per_token": 5e-05,
+              "cache_read_input_token_cost": 1e-06,
+              "cache_creation_input_token_cost": 1.25e-05
+            },
+            "model_info": {
+              "id": "mp::ultra-tier::commandcode::gpt-6-astra",
+              "base_model": "openai/gpt-6-astra",
+              "provider": "commandcode",
+              "model_group": "ultra-tier",
+              "provider_model_name": "GPT-6 Astra",
+              "max_input_tokens": 1050000
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pro",
+      "model_group": "pro-tier",
+      "floor_intelligence": 34.56,
+      "floor_frac": 0.6,
+      "lam": 0.2,
+      "pool_size": 40,
+      "backup_count": 0,
+      "deployments": [
+        {
+          "canonical_slug": "gpt-6-1-sol",
+          "canonical_name": "GPT-6.1 Sol (Max)",
+          "provider": "commandcode",
+          "model_id": "gpt-6.1-sol",
+          "display_name": "GPT-6.1 Sol",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1050000,
+          "intelligence": 51.8,
+          "cost_per_task": 0.4245421333333333,
+          "cost_method": "aa_free",
+          "nmb": 9.935457867,
+          "tier": "Pro",
+          "model_group": "pro-tier",
+          "order": 1,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.1,
+            "cache_write": 2.5,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "pro-tier",
+            "litellm_params": {
+              "model": "openai/gpt-6.1-sol",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 1,
+              "input_cost_per_token": 2e-06,
+              "output_cost_per_token": 1e-05,
+              "cache_read_input_token_cost": 1.0000000000000001e-07,
+              "cache_creation_input_token_cost": 2.5e-06
+            },
+            "model_info": {
+              "id": "mp::pro-tier::commandcode::gpt-6.1-sol",
+              "base_model": "openai/gpt-6.1-sol",
+              "provider": "commandcode",
+              "model_group": "pro-tier",
+              "provider_model_name": "GPT-6.1 Sol",
+              "max_input_tokens": 1050000
+            }
+          }
+        },
+        {
+          "canonical_slug": "gemini-4-argon",
+          "canonical_name": "Gemini 4 Argon (High)",
+          "provider": "commandcode",
+          "model_id": "google/gemini-4-argon",
+          "display_name": "Gemini 4 Argon",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 52.6,
+          "cost_per_task": 1.166758088888889,
+          "cost_method": "aa_free",
+          "nmb": 9.353241911000001,
+          "tier": "Pro",
+          "model_group": "pro-tier",
+          "order": 2,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.1,
+            "cache_write": 2,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "aa_fallback"
+            }
+          },
+          "litellm_params": {
+            "model_name": "pro-tier",
+            "litellm_params": {
+              "model": "openai/google/gemini-4-argon",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 2,
+              "input_cost_per_token": 2e-06,
+              "output_cost_per_token": 1e-05,
+              "cache_read_input_token_cost": 1.0000000000000001e-07
+            },
+            "model_info": {
+              "id": "mp::pro-tier::commandcode::google/gemini-4-argon",
+              "base_model": "openai/google/gemini-4-argon",
+              "provider": "commandcode",
+              "model_group": "pro-tier",
+              "provider_model_name": "Gemini 4 Argon",
+              "max_input_tokens": 1000000
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-pro",
+          "canonical_name": "MiMo-V2.6-Pro",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.6-pro",
+          "display_name": "MiMo V2.6 Pro",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1048576,
+          "intelligence": 46.3,
+          "cost_per_task": 0.046896198620689666,
+          "cost_method": "aa_free",
+          "nmb": 9.213103800999999,
+          "tier": "Pro",
+          "model_group": "pro-tier",
+          "order": 3,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.0036,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "pro-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.6-pro",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 3,
+              "input_cost_per_token": 4.35e-07,
+              "output_cost_per_token": 8.7e-07,
+              "cache_read_input_token_cost": 3.6e-09
+            },
+            "model_info": {
+              "id": "mp::pro-tier::commandcode::xiaomi/mimo-v2.6-pro",
+              "base_model": "openai/xiaomi/mimo-v2.6-pro",
+              "provider": "commandcode",
+              "model_group": "pro-tier",
+              "provider_model_name": "MiMo V2.6 Pro",
+              "max_input_tokens": 1048576
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-pro",
+          "canonical_name": "MiMo-V2.6-Pro",
+          "provider": "opencode",
+          "model_id": "mimo-v2.6-pro",
+          "display_name": "mimo-v2.6-pro",
+          "endpoint_type": "chat",
+          "api_base": "https://opencode.ai/inference/go/v1",
+          "api_key_env": "OPENCODE_API_KEY",
+          "context_tokens": null,
+          "intelligence": 46.3,
+          "cost_per_task": 0.04690120000000001,
+          "cost_method": "aa_free",
+          "nmb": 9.2130988,
+          "tier": "Pro",
+          "model_group": "pro-tier",
+          "order": 4,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.003625,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "pro-tier",
+            "litellm_params": {
+              "model": "openai/mimo-v2.6-pro",
+              "api_base": "https://opencode.ai/inference/go/v1",
+              "api_key": "os.environ/OPENCODE_API_KEY",
+              "order": 4,
+              "input_cost_per_token": 4.35e-07,
+              "output_cost_per_token": 8.7e-07,
+              "cache_read_input_token_cost": 3.625e-09,
+              "extra_headers": {
+                "x-opencode-session": "model-pipeline-gateway"
+              }
+            },
+            "model_info": {
+              "id": "mp::pro-tier::opencode::mimo-v2.6-pro",
+              "base_model": "openai/mimo-v2.6-pro",
+              "provider": "opencode",
+              "model_group": "pro-tier",
+              "provider_model_name": "mimo-v2.6-pro"
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-pro",
+          "canonical_name": "MiMo-V2.6-Pro",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+          "display_name": "MiMo V2.6 Pro UltraSpeed",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1048576,
+          "intelligence": 46.3,
+          "cost_per_task": 0.4689619862068966,
+          "cost_method": "aa_free",
+          "nmb": 8.791038014,
+          "tier": "Pro",
+          "model_group": "pro-tier",
+          "order": 5,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 4.35,
+            "output": 8.7,
+            "cache_read": 0.036,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "pro-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.6-pro-ultraspeed",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 5,
+              "input_cost_per_token": 4.35e-06,
+              "output_cost_per_token": 8.7e-06,
+              "cache_read_input_token_cost": 3.6e-08
+            },
+            "model_info": {
+              "id": "mp::pro-tier::commandcode::xiaomi/mimo-v2.6-pro-ultraspeed",
+              "base_model": "openai/xiaomi/mimo-v2.6-pro-ultraspeed",
+              "provider": "commandcode",
+              "model_group": "pro-tier",
+              "provider_model_name": "MiMo V2.6 Pro UltraSpeed",
+              "max_input_tokens": 1048576
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Flash",
+      "model_group": "flash-tier",
+      "floor_intelligence": 20.16,
+      "floor_frac": 0.35,
+      "lam": 0.005,
+      "pool_size": 70,
+      "backup_count": 0,
+      "deployments": [
+        {
+          "canonical_slug": "mimo-v2-6-pro",
+          "canonical_name": "MiMo-V2.6-Pro",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.6-pro",
+          "display_name": "MiMo V2.6 Pro",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1048576,
+          "intelligence": 46.3,
+          "cost_per_task": 0.046896198620689666,
+          "cost_method": "aa_free",
+          "nmb": 0.18460380099999998,
+          "tier": "Flash",
+          "model_group": "flash-tier",
+          "order": 1,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.0036,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.6-pro",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 1,
+              "input_cost_per_token": 4.35e-07,
+              "output_cost_per_token": 8.7e-07,
+              "cache_read_input_token_cost": 3.6e-09
+            },
+            "model_info": {
+              "id": "mp::flash-tier::commandcode::xiaomi/mimo-v2.6-pro",
+              "base_model": "openai/xiaomi/mimo-v2.6-pro",
+              "provider": "commandcode",
+              "model_group": "flash-tier",
+              "provider_model_name": "MiMo V2.6 Pro",
+              "max_input_tokens": 1048576
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-pro",
+          "canonical_name": "MiMo-V2.6-Pro",
+          "provider": "opencode",
+          "model_id": "mimo-v2.6-pro",
+          "display_name": "mimo-v2.6-pro",
+          "endpoint_type": "chat",
+          "api_base": "https://opencode.ai/inference/go/v1",
+          "api_key_env": "OPENCODE_API_KEY",
+          "context_tokens": null,
+          "intelligence": 46.3,
+          "cost_per_task": 0.04690120000000001,
+          "cost_method": "aa_free",
+          "nmb": 0.18459879999999998,
+          "tier": "Flash",
+          "model_group": "flash-tier",
+          "order": 2,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.003625,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-tier",
+            "litellm_params": {
+              "model": "openai/mimo-v2.6-pro",
+              "api_base": "https://opencode.ai/inference/go/v1",
+              "api_key": "os.environ/OPENCODE_API_KEY",
+              "order": 2,
+              "input_cost_per_token": 4.35e-07,
+              "output_cost_per_token": 8.7e-07,
+              "cache_read_input_token_cost": 3.625e-09,
+              "extra_headers": {
+                "x-opencode-session": "model-pipeline-gateway"
+              }
+            },
+            "model_info": {
+              "id": "mp::flash-tier::opencode::mimo-v2.6-pro",
+              "base_model": "openai/mimo-v2.6-pro",
+              "provider": "opencode",
+              "model_group": "flash-tier",
+              "provider_model_name": "mimo-v2.6-pro"
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-flash",
+          "canonical_name": "MiMo-V2.6-Flash",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.6-flash",
+          "display_name": "MiMo V2.6 Flash",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1048576,
+          "intelligence": 37.9,
+          "cost_per_task": 0.02244736,
+          "cost_method": "aa_free",
+          "nmb": 0.16705264,
+          "tier": "Flash",
+          "model_group": "flash-tier",
+          "order": 3,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.6-flash",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 3,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 2.8e-07,
+              "cache_read_input_token_cost": 2.8e-09
+            },
+            "model_info": {
+              "id": "mp::flash-tier::commandcode::xiaomi/mimo-v2.6-flash",
+              "base_model": "openai/xiaomi/mimo-v2.6-flash",
+              "provider": "commandcode",
+              "model_group": "flash-tier",
+              "provider_model_name": "MiMo V2.6 Flash",
+              "max_input_tokens": 1048576
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-flash",
+          "canonical_name": "MiMo-V2.6-Flash",
+          "provider": "opencode",
+          "model_id": "mimo-v2.6-flash",
+          "display_name": "mimo-v2.6-flash",
+          "endpoint_type": "chat",
+          "api_base": "https://opencode.ai/inference/go/v1",
+          "api_key_env": "OPENCODE_API_KEY",
+          "context_tokens": null,
+          "intelligence": 37.9,
+          "cost_per_task": 0.02244736,
+          "cost_method": "aa_free",
+          "nmb": 0.16705264,
+          "tier": "Flash",
+          "model_group": "flash-tier",
+          "order": 3,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-tier",
+            "litellm_params": {
+              "model": "openai/mimo-v2.6-flash",
+              "api_base": "https://opencode.ai/inference/go/v1",
+              "api_key": "os.environ/OPENCODE_API_KEY",
+              "order": 3,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 2.8e-07,
+              "cache_read_input_token_cost": 2.8e-09,
+              "extra_headers": {
+                "x-opencode-session": "model-pipeline-gateway"
+              }
+            },
+            "model_info": {
+              "id": "mp::flash-tier::opencode::mimo-v2.6-flash",
+              "base_model": "openai/mimo-v2.6-flash",
+              "provider": "opencode",
+              "model_group": "flash-tier",
+              "provider_model_name": "mimo-v2.6-flash"
+            }
+          }
+        },
+        {
+          "canonical_slug": "gpt-6-luna",
+          "canonical_name": "GPT-6 Luna (Max)",
+          "provider": "commandcode",
+          "model_id": "gpt-6-luna",
+          "display_name": "GPT-6 Luna",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1050000,
+          "intelligence": 38.1,
+          "cost_per_task": 0.04122239999999999,
+          "cost_method": "aa_free",
+          "nmb": 0.1492776,
+          "tier": "Flash",
+          "model_group": "flash-tier",
+          "order": 4,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.1,
+            "output": 0.5,
+            "cache_read": 0.01,
+            "cache_write": 0.125,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-tier",
+            "litellm_params": {
+              "model": "openai/gpt-6-luna",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 4,
+              "input_cost_per_token": 1.0000000000000001e-07,
+              "output_cost_per_token": 5e-07,
+              "cache_read_input_token_cost": 1e-08,
+              "cache_creation_input_token_cost": 1.25e-07
+            },
+            "model_info": {
+              "id": "mp::flash-tier::commandcode::gpt-6-luna",
+              "base_model": "openai/gpt-6-luna",
+              "provider": "commandcode",
+              "model_group": "flash-tier",
+              "provider_model_name": "GPT-6 Luna",
+              "max_input_tokens": 1050000
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-5-pro",
+          "canonical_name": "MiMo-V2.5-Pro (Reasoning)",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.5-pro",
+          "display_name": "MiMo V2.5 Pro",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 26,
+          "cost_per_task": 0.01904717977011495,
+          "cost_method": "aa_free",
+          "nmb": 0.11095282000000001,
+          "tier": "Flash",
+          "model_group": "flash-tier",
+          "order": 5,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.0036,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.5-pro",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 5,
+              "input_cost_per_token": 4.35e-07,
+              "output_cost_per_token": 8.7e-07,
+              "cache_read_input_token_cost": 3.6e-09
+            },
+            "model_info": {
+              "id": "mp::flash-tier::commandcode::xiaomi/mimo-v2.5-pro",
+              "base_model": "openai/xiaomi/mimo-v2.5-pro",
+              "provider": "commandcode",
+              "model_group": "flash-tier",
+              "provider_model_name": "MiMo V2.5 Pro",
+              "max_input_tokens": 1000000
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Flash Lite",
+      "model_group": "flash-lite-tier",
+      "floor_intelligence": 0.0,
+      "floor_frac": 0.0,
+      "lam": 0.0005,
+      "pool_size": 75,
+      "backup_count": 0,
+      "deployments": [
+        {
+          "canonical_slug": "mimo-v2-5-0424",
+          "canonical_name": "MiMo-V2.5",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.5",
+          "display_name": "MiMo V2.5",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 21.8,
+          "cost_per_task": 0.006870906666666666,
+          "cost_method": "aa_free",
+          "nmb": 0.004029093,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 1,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.5",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 1,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 2.8e-07,
+              "cache_read_input_token_cost": 2.8e-09
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::commandcode::xiaomi/mimo-v2.5",
+              "base_model": "openai/xiaomi/mimo-v2.5",
+              "provider": "commandcode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "MiMo V2.5",
+              "max_input_tokens": 1000000
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-5-0424",
+          "canonical_name": "MiMo-V2.5",
+          "provider": "opencode",
+          "model_id": "mimo-v2.5",
+          "display_name": "mimo-v2.5",
+          "endpoint_type": "chat",
+          "api_base": "https://opencode.ai/inference/go/v1",
+          "api_key_env": "OPENCODE_API_KEY",
+          "context_tokens": null,
+          "intelligence": 21.8,
+          "cost_per_task": 0.006870906666666666,
+          "cost_method": "aa_free",
+          "nmb": 0.004029093,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 1,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/mimo-v2.5",
+              "api_base": "https://opencode.ai/inference/go/v1",
+              "api_key": "os.environ/OPENCODE_API_KEY",
+              "order": 1,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 2.8e-07,
+              "cache_read_input_token_cost": 2.8e-09,
+              "extra_headers": {
+                "x-opencode-session": "model-pipeline-gateway"
+              }
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::opencode::mimo-v2.5",
+              "base_model": "openai/mimo-v2.5",
+              "provider": "opencode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "mimo-v2.5"
+            }
+          }
+        },
+        {
+          "canonical_slug": "hy3-preview",
+          "canonical_name": "Hy3-preview (Reasoning)",
+          "provider": "opencode",
+          "model_id": "hy3",
+          "display_name": "hy3",
+          "endpoint_type": "chat",
+          "api_base": "https://opencode.ai/inference/go/v1",
+          "api_key_env": "OPENCODE_API_KEY",
+          "context_tokens": null,
+          "intelligence": 22.7,
+          "cost_per_task": 0.012740000000000001,
+          "cost_method": "task_profile",
+          "nmb": -0.0013899999999999989,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 2,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.58,
+            "cache_read": 0.035,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/hy3",
+              "api_base": "https://opencode.ai/inference/go/v1",
+              "api_key": "os.environ/OPENCODE_API_KEY",
+              "order": 2,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 5.8e-07,
+              "cache_read_input_token_cost": 3.5e-08,
+              "extra_headers": {
+                "x-opencode-session": "model-pipeline-gateway"
+              }
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::opencode::hy3",
+              "base_model": "openai/hy3",
+              "provider": "opencode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "hy3"
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-flash",
+          "canonical_name": "MiMo-V2.6-Flash",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.6-flash",
+          "display_name": "MiMo V2.6 Flash",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1048576,
+          "intelligence": 37.9,
+          "cost_per_task": 0.02244736,
+          "cost_method": "aa_free",
+          "nmb": -0.0034973600000000014,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 3,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.6-flash",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 3,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 2.8e-07,
+              "cache_read_input_token_cost": 2.8e-09
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::commandcode::xiaomi/mimo-v2.6-flash",
+              "base_model": "openai/xiaomi/mimo-v2.6-flash",
+              "provider": "commandcode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "MiMo V2.6 Flash",
+              "max_input_tokens": 1048576
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-6-flash",
+          "canonical_name": "MiMo-V2.6-Flash",
+          "provider": "opencode",
+          "model_id": "mimo-v2.6-flash",
+          "display_name": "mimo-v2.6-flash",
+          "endpoint_type": "chat",
+          "api_base": "https://opencode.ai/inference/go/v1",
+          "api_key_env": "OPENCODE_API_KEY",
+          "context_tokens": null,
+          "intelligence": 37.9,
+          "cost_per_task": 0.02244736,
+          "cost_method": "aa_free",
+          "nmb": -0.0034973600000000014,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 3,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/mimo-v2.6-flash",
+              "api_base": "https://opencode.ai/inference/go/v1",
+              "api_key": "os.environ/OPENCODE_API_KEY",
+              "order": 3,
+              "input_cost_per_token": 1.4e-07,
+              "output_cost_per_token": 2.8e-07,
+              "cache_read_input_token_cost": 2.8e-09,
+              "extra_headers": {
+                "x-opencode-session": "model-pipeline-gateway"
+              }
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::opencode::mimo-v2.6-flash",
+              "base_model": "openai/mimo-v2.6-flash",
+              "provider": "opencode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "mimo-v2.6-flash"
+            }
+          }
+        },
+        {
+          "canonical_slug": "minimax-m2-5",
+          "canonical_name": "MiniMax-M2.5",
+          "provider": "commandcode",
+          "model_id": "MiniMaxAI/MiniMax-M2.5",
+          "display_name": "MiniMax M2.5",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 200000,
+          "intelligence": 22.8,
+          "cost_per_task": 0.016649999999999998,
+          "cost_method": "task_profile",
+          "nmb": -0.005250000000000001,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 4,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.3,
+            "output": 1.2,
+            "cache_read": 0.03,
+            "cache_write": 0.375,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider",
+              "cache_write": "aa_fallback"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/MiniMaxAI/MiniMax-M2.5",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 4,
+              "input_cost_per_token": 3e-07,
+              "output_cost_per_token": 1.2e-06,
+              "cache_read_input_token_cost": 3e-08
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::commandcode::MiniMaxAI/MiniMax-M2.5",
+              "base_model": "openai/MiniMaxAI/MiniMax-M2.5",
+              "provider": "commandcode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "MiniMax M2.5",
+              "max_input_tokens": 200000
+            }
+          }
+        },
+        {
+          "canonical_slug": "mimo-v2-5-pro",
+          "canonical_name": "MiMo-V2.5-Pro (Reasoning)",
+          "provider": "commandcode",
+          "model_id": "xiaomi/mimo-v2.5-pro",
+          "display_name": "MiMo V2.5 Pro",
+          "endpoint_type": "chat",
+          "api_base": "https://api.commandcode.ai/provider/v1",
+          "api_key_env": "COMMANDCODE_API_KEY",
+          "context_tokens": 1000000,
+          "intelligence": 26,
+          "cost_per_task": 0.01904717977011495,
+          "cost_method": "aa_free",
+          "nmb": -0.006047179999999999,
+          "tier": "Flash Lite",
+          "model_group": "flash-lite-tier",
+          "order": 5,
+          "pareto_frontier": true,
+          "is_backup": false,
+          "effective_prices": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.0036,
+            "cache_write": null,
+            "provenance": {
+              "input": "provider",
+              "output": "provider",
+              "cache_read": "provider"
+            }
+          },
+          "litellm_params": {
+            "model_name": "flash-lite-tier",
+            "litellm_params": {
+              "model": "openai/xiaomi/mimo-v2.5-pro",
+              "api_base": "https://api.commandcode.ai/provider/v1",
+              "api_key": "os.environ/COMMANDCODE_API_KEY",
+              "order": 5,
+              "input_cost_per_token": 4.35e-07,
+              "output_cost_per_token": 8.7e-07,
+              "cache_read_input_token_cost": 3.6e-09
+            },
+            "model_info": {
+              "id": "mp::flash-lite-tier::commandcode::xiaomi/mimo-v2.5-pro",
+              "base_model": "openai/xiaomi/mimo-v2.5-pro",
+              "provider": "commandcode",
+              "model_group": "flash-lite-tier",
+              "provider_model_name": "MiMo V2.5 Pro",
+              "max_input_tokens": 1000000
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

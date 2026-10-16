@@ -24,7 +24,7 @@ Monolithic **Mode C (Hybrid)**: a database **and** a `config.yaml`.
 
 | File | Role |
 |------|------|
-| `docker-compose.quickstart.yml` | the two services (litellm + db) |
+| `docker-compose.yml` | the two services (litellm + db) |
 | `config.yaml` | models, routing, defaults — mounted to `/app/config.yaml` |
 | `custom_cost_map.json` | full copy of LiteLLM's cost map + our CommandCode entries |
 | `.env` | secrets (gitignored) |
@@ -41,7 +41,7 @@ Monolithic **Mode C (Hybrid)**: a database **and** a `config.yaml`.
 
 ---
 
-## Step 2 — Create `docker-compose.quickstart.yml`
+## Step 2 — Create `docker-compose.yml`
 
 Two services: `litellm` (the gateway) and `db` (Postgres). The gateway is made **config-driven** by three lines: the `volumes` mount, `STORE_MODEL_IN_DB`, and `command`.
 
@@ -110,13 +110,13 @@ printf 'LITELLM_MASTER_KEY=sk-%s\nLITELLM_SALT_KEY=sk-%s\n' "$(openssl rand -hex
 ## Step 4 — Run the stack in Podman
 
 ```powershell
-podman compose -f docker-compose.quickstart.yml up -d
+podman compose -f docker-compose.yml up -d
 ```
 
 Wait ~30s for Postgres, then confirm:
 
 ```powershell
-podman compose -f docker-compose.quickstart.yml logs litellm
+podman compose -f docker-compose.yml logs litellm
 ```
 
 Expect `Uvicorn running on http://0.0.0.0:4000`. Then open **http://localhost:4000/ui** and sign in with `LITELLM_MASTER_KEY`.
@@ -182,7 +182,7 @@ COMMANDCODE_API_KEY=sk-<your-commandcode-key>
 ## Step 7 — Apply and confirm
 
 ```powershell
-podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+podman compose -f docker-compose.yml up -d --force-recreate litellm
 ```
 
 In the Admin UI, open **Models + Endpoints** and confirm `flash-tier` and `pro-tier` are listed. (Missing? See Troubleshooting.)
@@ -218,7 +218,7 @@ In the Admin UI, open **Models + Endpoints** and confirm `flash-tier` and `pro-t
 5. Apply:
 
    ```powershell
-   podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+   podman compose -f docker-compose.yml up -d --force-recreate litellm
    ```
 
 Cost-map rules:
@@ -383,8 +383,8 @@ On the Create Key form, set user, team, models, budget, duration. Notes:
 
 | Change | Command |
 |--------|---------|
-| `config.yaml` (models, routing, defaults) | `podman compose -f docker-compose.quickstart.yml restart litellm` |
-| `.env` / `docker-compose.quickstart.yml` | `podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm` |
+| `config.yaml` (models, routing, defaults) | `podman compose -f docker-compose.yml restart litellm` |
+| `.env` / `docker-compose.yml` | `podman compose -f docker-compose.yml up -d --force-recreate litellm` |
 | `custom_cost_map.json` (remote) | push, then `restart litellm` |
 
 > `restart` reuses the existing container spec, so **new environment variables are not applied**.
@@ -395,8 +395,8 @@ On the Create Key form, set user, team, models, budget, duration. Notes:
 
 ### Models not showing in the Admin UI
 1. Validate `config.yaml` (indentation-sensitive; no duplicate top-level blocks).
-2. `podman compose -f docker-compose.quickstart.yml restart litellm`
-3. `podman compose -f docker-compose.quickstart.yml logs litellm`
+2. `podman compose -f docker-compose.yml restart litellm`
+3. `podman compose -f docker-compose.yml logs litellm`
 
 ### Request cost is $0
 1. The deployment's **exact** `litellm_params.model` must have a map entry.
@@ -420,22 +420,22 @@ On the Create Key form, set user, team, models, budget, duration. Notes:
 
 ```powershell
 # Start / stop
-podman compose -f docker-compose.quickstart.yml up -d
-podman compose -f docker-compose.quickstart.yml down
+podman compose -f docker-compose.yml up -d
+podman compose -f docker-compose.yml down
 
 # Reload config.yaml
-podman compose -f docker-compose.quickstart.yml restart litellm
+podman compose -f docker-compose.yml restart litellm
 
 # Apply .env / compose changes
-podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+podman compose -f docker-compose.yml up -d --force-recreate litellm
 
 # Logs
-podman compose -f docker-compose.quickstart.yml logs -f litellm
+podman compose -f docker-compose.yml logs -f litellm
 
 # Full reset (wipes DB)
-podman compose -f docker-compose.quickstart.yml down && `
+podman compose -f docker-compose.yml down && `
   podman volume rm litellm_postgres_data && `
-  podman compose -f docker-compose.quickstart.yml up -d
+  podman compose -f docker-compose.yml up -d
 ```
 
 **Admin UI map (http://localhost:4000/ui):**

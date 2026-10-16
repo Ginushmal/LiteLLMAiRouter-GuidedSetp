@@ -283,7 +283,7 @@ volumes:
 **There is no `/config/reload` endpoint.** To reload config.yaml, restart the container:
 
 ```bash
-podman compose -f docker-compose.quickstart.yml restart litellm
+podman compose -f docker-compose.yml restart litellm
 ```
 
 ---
@@ -992,19 +992,19 @@ spec:
 
 ```bash
 # Start
-podman compose -f docker-compose.quickstart.yml up -d
+podman compose -f docker-compose.yml up -d
 
 # Stop
-podman compose -f docker-compose.quickstart.yml down
+podman compose -f docker-compose.yml down
 
 # Restart proxy only (does NOT apply env-var / compose changes)
-podman compose -f docker-compose.quickstart.yml restart litellm
+podman compose -f docker-compose.yml restart litellm
 
 # Apply env-var / compose changes (recreates the container)
-podman compose -f docker-compose.quickstart.yml up -d --force-recreate litellm
+podman compose -f docker-compose.yml up -d --force-recreate litellm
 
 # View logs
-podman compose -f docker-compose.quickstart.yml logs -f litellm
+podman compose -f docker-compose.yml logs -f litellm
 
 # Health check
 curl http://localhost:4000/health/readiness
@@ -1043,9 +1043,9 @@ curl -X POST http://localhost:4000/key/unblock -H "Authorization: Bearer $MASTER
 curl -X POST http://localhost:4000/key/service-account/generate -H "Authorization: Bearer $MASTER_KEY" -H "Content-Type: application/json" -d '{"team_id":"BA","models":["flash-tier"]}'
 
 # Reset everything
-podman compose -f docker-compose.quickstart.yml down && \
+podman compose -f docker-compose.yml down && \
 podman volume rm litellm_postgres_data && \
-podman compose -f docker-compose.quickstart.yml up -d
+podman compose -f docker-compose.yml up -d
 ```
 
 ### Cost Map Diagnostics

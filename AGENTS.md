@@ -57,7 +57,7 @@ Update it using the skill at:
 That skill also holds a **self-updating list of official doc sources** — add any new, useful doc page (or source file) there when you use it.
 
 ### `Setup-Guide.md` — Step-by-Step Setup
-The practical "do this, then this" runbook to stand the stack up, **in the order it was built**. It uses **only the four repo files (`config.yaml`, `docker-compose.quickstart.yml`, `.env`, `custom_cost_map.json`) and the Admin UI — no hand-written API/endpoint calls**; the only shell commands are Podman/Compose. Keep it simple and runnable, and update it whenever the setup steps or config change.
+The practical "do this, then this" runbook to stand the stack up, **in the order it was built**. It uses **only the four repo files (`config.yaml`, `docker-compose.yml`, `.env`, `custom_cost_map.json`) and the Admin UI — no hand-written API/endpoint calls**; the only shell commands are Podman/Compose. Keep it simple and runnable, and update it whenever the setup steps or config change.
 
 ## Working Files
 
@@ -67,7 +67,7 @@ The practical "do this, then this" runbook to stand the stack up, **in the order
 | `Setup-Guide.md` | Step-by-step setup runbook (files + Admin UI; no hand-written API calls) |
 | `ROADMAP.md` | Master study checklist — what is done and what is next |
 | `config.yaml` | Model/routing config, heavily commented for learning |
-| `docker-compose.quickstart.yml` | Local stack (LiteLLM + Postgres) |
+| `docker-compose.yml` | Local stack (LiteLLM + Postgres) |
 | `custom_cost_map.json` | Self-hosted cost map (full fork of upstream + our prices) |
 | `.env` | Secrets — **gitignored, never commit** |
 | `.agents/skills/update-litellm-learnings/SKILL.md` | Skill for updating the learnings doc |

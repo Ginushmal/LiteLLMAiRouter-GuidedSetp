@@ -1,247 +1,46 @@
-# =============================================================================
-# LiteLLM Configuration File
-# =============================================================================
-# This file bootstraps your LiteLLM proxy configuration.
-# When STORE_MODEL_IN_DB=True is set in docker-compose, this file acts as
-# bootstrap - the Admin UI can override these settings (database wins on conflict).
-#
-# Documentation: https://docs.litellm.ai/docs/proxy/configs
-# Config Settings Reference: https://docs.litellm.ai/docs/proxy/config_settings
-# =============================================================================
+# LiteLLM proxy configuration
+# Docs: https://docs.litellm.ai/docs/proxy/configs
 
-# =============================================================================
-# MODEL LIST
-# =============================================================================
-# Define your AI model deployments here.
-# Multiple deployments with the same model_name are automatically load-balanced.
-# Documentation: https://docs.litellm.ai/docs/proxy/load_balancing
+# -----------------------------------------------------------------------------
+# model_list
+# -----------------------------------------------------------------------------
+# The tier model groups (ultra-tier / pro-tier / flash-tier / flash-lite-tier)
+# are NO LONGER defined here. They are managed in LiteLLM's database by the
+# `model-pipeline/` sub-project, which fetches provider models, scores them, and
+# populates them via the management API (requires general_settings.store_model_in_db).
 #
-# Key concepts:
-# - model_name: What your apps request (e.g., "flash-tier")
-# - litellm_params.model: Provider/model format (e.g., "openai/gpt-4o")
-# - litellm_params.api_base: For OpenAI-compatible providers
-# - model_info: Pricing and metadata
+# Defining them here too would create duplicate deployments (config + DB entries
+# are load-balanced together), so only the router lives in this file.
 #
-# For custom OpenAI-compatible providers, use "openai/<model-name>" format
-# and set api_base to the provider's endpoint.
-# =============================================================================
-
+# To (re)populate the tiers:   cd model-pipeline && uv run model-pipeline populate
 model_list:
   # ---------------------------------------------------------------------------
-  # FLASH TIER - DeepSeek V4.1 Flash
+  # SMART ROUTER - complexity-based, routes to the tier model groups above.
+  # The tier groups themselves come from the database (model-pipeline).
   # ---------------------------------------------------------------------------
-  # This model is in the "Flash Tier" group (model_name: flash-tier)
-  # Apps request this with: model: "flash-tier"
-  # ---------------------------------------------------------------------------
-  - model_name: flash-tier
-    litellm_params:
-      # Format: openai/<model-name> for OpenAI-compatible providers
-      # The "openai/" prefix tells LiteLLM to use OpenAI-compatible protocol
-      # The model name after "openai/" is what gets sent to the provider's API
-      # CommandCode expects "deepseek/deepseek-v4.1-flash" as the model name
-      model: openai/deepseek/deepseek-v4.1-flash
-
-      # Custom API endpoint for CommandCode Goat subscription
-      api_base: https://api.commandcode.ai/provider/v1
-
-      # API key from environment variable (set in .env file)
-      # This keeps secrets out of the config file
-      api_key: os.environ/COMMANDCODE_API_KEY
-
-      order: 1
-
-      # Optional: Set temperature (default is model-specific)
-      # temperature: 0.7
-
-      # Optional: Set max tokens for responses
-      # max_tokens: 4096
-
-      # Optional: Request timeout in seconds
-      # timeout: 60
-
-      # Optional: Rate limits for this deployment
-      # Used for weighted load balancing when multiple deployments exist
-      # rpm: 60  # Requests per minute
-      # tpm: 100000  # Tokens per minute
-
-    # Model metadata
-    model_info:
-      # base_model matches the deployment's litellm_params.model exactly.
-      # Pricing comes from custom_cost_map.json, which is keyed by the exact
-      # litellm_params.model (see LITELLM_MODEL_COST_MAP_URL in docker-compose).
-      base_model: openai/deepseek/deepseek-v4.1-flash
-
-      # Optional: Max tokens this model supports
-      # max_tokens: 8192
-
-      # Optional: Mode (chat, embedding, etc.)
-      # mode: chat
-
-      # Optional: Access groups for restricting model access to specific keys/teams
-      # access_groups: ["flash-tier-access"]
-
-  - model_name: flash-tier
-    litellm_params:
-      model: openai/qwen/qwen3.8-omni-flash
-      api_base: https://api.commandcode.ai/provider/v1
-      api_key: os.environ/COMMANDCODE_API_KEY
-      order: 1
-    # Model metadata
-    model_info:
-      base_model: openai/qwen/qwen3.8-omni-flash
-
-  # ---------------------------------------------------------------------------
-  # FLASH TIER - DeepSeek V4 Flash  (fallback / rollover)
-  # ---------------------------------------------------------------------------
-  # This is order 2 (fallback). Order 1 contains V4.1 Flash and Qwen 3.8
-  # Omni Flash. Within order 1, cost-based-routing picks the cheapest.
-  # This order-2 deployment is used once the order-1 attempts fail (after
-  # num_retries) - the router escalates tier by tier and does NOT try the
-  # other order-1 deployment first. Qwen serves only once V4.1 is cooled
-  # down (> allowed_fails failures) or filtered out.
-  # See router_settings.routing_groups -> flash-cost-optimized below.
-  # ---------------------------------------------------------------------------
-  - model_name: flash-tier
-    litellm_params:
-      model: openai/deepseek/deepseek-v4-flash
-      api_base: https://api.commandcode.ai/provider/v1
-      api_key: os.environ/COMMANDCODE_API_KEY
-      order: 2
-    model_info:
-      base_model: openai/deepseek/deepseek-v4-flash
-
-  - model_name: ds-v4-flash
-    litellm_params:
-      model: openai/deepseek/deepseek-v4-flash
-      api_base: https://api.commandcode.ai/provider/v1
-      api_key: os.environ/COMMANDCODE_API_KEY
-      order: 2
-    model_info:
-      base_model: openai/deepseek/deepseek-v4-flash
-
-  # ---------------------------------------------------------------------------
-  # PRO TIER - DeepSeek V4 Pro
-  # ---------------------------------------------------------------------------
-  # This model is in the "Pro Tier" group (model_name: pro-tier)
-  # Apps request this with: model: "pro-tier"
-  # ---------------------------------------------------------------------------
-  - model_name: pro-tier
-    litellm_params:
-      model: openai/deepseek/deepseek-v4-pro
-      api_base: https://api.commandcode.ai/provider/v1
-      api_key: os.environ/COMMANDCODE_API_KEY
-    model_info:
-      base_model: openai/deepseek/deepseek-v4-pro
-
-  # ---------------------------------------------------------------------------
-  # PRO TIER - Qwen 3.7 Plus
-  # ---------------------------------------------------------------------------
-  # Also in the "Pro Tier" group (same model_name: pro-tier)
-  # Requests to "pro-tier" will load-balance between DeepSeek V4 Pro and Qwen 3.7 Plus
-  # ---------------------------------------------------------------------------
-  - model_name: pro-tier
-    litellm_params:
-      model: openai/qwen/qwen3.7-plus
-      api_base: https://api.commandcode.ai/provider/v1
-      api_key: os.environ/COMMANDCODE_API_KEY
-    model_info:
-      base_model: openai/qwen/qwen3.7-plus
-
-
   - model_name: smart-router
     litellm_params:
       model: auto_router/complexity_router
       complexity_router_config:
         tiers:
-          SIMPLE:    flash-tier
-          MEDIUM:    openai/deepseek/deepseek-v4-flash
-          COMPLEX:   openai/qwen/qwen3.7-plus
-          REASONING: pro-latency-optimized
+          SIMPLE:    flash-lite-tier
+          MEDIUM:    flash-tier
+          COMPLEX:   pro-tier
+          REASONING: ultra-tier
+        classifier_type: jev
+        jev_classifier_config:
+          model: jev-latest
+          timeout_ms: 3000
+          circuit_breaker_enabled: true
+          circuit_breaker_cooldown_seconds: 30
+        classifier_fallback: heuristic
       complexity_router_default_model: flash-tier
 
-# =============================================================================
-# LITELLM SETTINGS
-# =============================================================================
-# Module-level settings for the LiteLLM library.
-# Documentation: https://docs.litellm.ai/docs/proxy/config_settings#litellm_settings---reference
-# =============================================================================
-
 litellm_settings:
-  # ---------------------------------------------------------------------------
-  # DROP_PARAMS
-  # ---------------------------------------------------------------------------
-  # When true, automatically drops unsupported parameters instead of erroring.
-  # Example: If a model doesn't support 'temperature', it's silently removed.
-  # Recommended: true for multi-provider setups
-  # ---------------------------------------------------------------------------
+  # Drop unsupported params instead of erroring (multi-provider friendly)
   drop_params: true
 
-  # ---------------------------------------------------------------------------
-  # SET_VERBOSE
-  # ---------------------------------------------------------------------------
-  # Enable detailed logging for debugging.
-  # WARNING: Very verbose, only enable when troubleshooting.
-  # Alternative: Set LITELLM_LOG="DEBUG" environment variable
-  # ---------------------------------------------------------------------------
-  # set_verbose: false
-
-  # ---------------------------------------------------------------------------
-  # CACHE
-  # ---------------------------------------------------------------------------
-  # Enable response caching to reduce costs and latency for duplicate requests.
-  # Requires Redis for multi-instance deployments.
-  # Documentation: https://docs.litellm.ai/docs/caching/gpt_cache
-  # ---------------------------------------------------------------------------
-  # cache: false
-  # cache_params:
-  #   type: redis          # or "local" for in-memory (single instance only)
-  #   host: localhost
-  #   port: 6379
-  #   password: ""         # or os.environ/REDIS_PASSWORD
-
-  # ---------------------------------------------------------------------------
-  # GLOBAL BUDGET
-  # ---------------------------------------------------------------------------
-  # Set a global spend limit for the entire proxy.
-  # IMPORTANT: Only works when DATABASE_URL is set (requires database).
-  # Without a database, this setting is silently ignored.
-  # Documentation: https://docs.litellm.ai/docs/proxy/users
-  # ---------------------------------------------------------------------------
-  # max_budget: 100        # USD
-  # budget_duration: "1mo" # Reset period: "1d", "7d", "1mo", etc.
-
-  # ---------------------------------------------------------------------------
-  # CALLBACKS
-  # ---------------------------------------------------------------------------
-  # Enable observability integrations (Langfuse, Datadog, etc.)
-  # Documentation: https://docs.litellm.ai/docs/observability/callbacks
-  # ---------------------------------------------------------------------------
-  # success_callback: ["langfuse"]
-  # failure_callback: ["langfuse"]
-  # langfuse_secret_key: os.environ/LANGFUSE_SECRET_KEY
-  # langfuse_public_key: os.environ/LANGFUSE_PUBLIC_KEY
-  # langfuse_host: https://cloud.langfuse.com
-
-  # ---------------------------------------------------------------------------
-  # DEFAULT / UPPERBOUND KEY + TEAM PARAMS  (config-driven defaults)
-  # ---------------------------------------------------------------------------
-  # These do NOT create keys/teams - those are database entities. They set the
-  # defaults and hard bounds that every FUTURE key/team inherits, whether created
-  # via the Admin UI or the API (the UI calls the same endpoints).
-  # Docs: https://docs.litellm.ai/docs/proxy/virtual_keys#default-keygenerate-params
-  #
-  # default_key_generate_params
-  #   Fills any field that is missing or null on a /key/generate request.
-  #   Exception: an explicit "budget_duration": null skips the default.
-  #
-  # upperbound_key_generate_params
-  #   Hard ceilings. A request above a ceiling is REJECTED (HTTP 400), not clamped.
-  #   These also act as defaults when a field is omitted and cannot be opted out.
-  #
-  # default_team_params
-  #   Defaults applied to every new team (UI or /team/new). Its "models" list is
-  #   only auto-applied to SSO auto-created teams.
-  # ---------------------------------------------------------------------------
+  # Defaults and hard ceilings inherited by new keys/teams (UI or API)
   default_key_generate_params:
     models: ["flash-cost-optimized"]
     max_budget: 10
@@ -266,213 +65,36 @@ litellm_settings:
     models: ["flash-tier", "pro-tier"]
     team_member_permissions: ["/key/generate", "/key/info", "/key/list"]
 
-# =============================================================================
-# ROUTER SETTINGS
-# =============================================================================
-# Controls how requests are routed across model deployments.
-# Documentation: https://docs.litellm.ai/docs/routing
-# =============================================================================
-
 router_settings:
-  # ---------------------------------------------------------------------------
-  # ROUTING STRATEGY
-  # ---------------------------------------------------------------------------
-  # How to select which deployment handles a request.
-  # Options:
-  #   - "simple-shuffle" (default): Random selection (weighted by tpm/rpm if set)
-  #   - "least-busy": Route to deployment with fewest active requests
-  #   - "latency-based-routing": Route to fastest deployment
-  #   - "usage-based-routing": Route based on token usage
-  #
-  # Recommendation: "simple-shuffle" + tpm/rpm set per deployment maximizes throughput
-  # ---------------------------------------------------------------------------
-  routing_strategy: simple-shuffle
-
-  # ---------------------------------------------------------------------------
-  # RETRIES & TIMEOUTS
-  # ---------------------------------------------------------------------------
-  # num_retries: Router-level retry attempts per model group.
-  #   (default: 2 = openai.DEFAULT_MAX_RETRIES when unset; NOT 0)
-  #   Distinct from the provider SDK's max_retries, which the router pins to
-  #   0 so retries are not multiplied. Retries re-run the routing strategy;
-  #   they do NOT exclude the failed deployment for retryable errors.
-  # timeout: Request timeout in seconds (default: None)
-  # ---------------------------------------------------------------------------
+  routing_strategy: cost-based-routing
   num_retries: 3
   timeout: 60
-
-  # ---------------------------------------------------------------------------
-  # FAILURE HANDLING
-  # ---------------------------------------------------------------------------
-  # allowed_fails: A deployment is cooled down after MORE than this many
-  #   failures in the window (default: 3). Cooldown protects FUTURE requests,
-  #   not the current one - one request chain cannot trip it.
-  # cooldown_time: Seconds a deployment stays cooled down once tripped
-  #   (default: 5). While cooled down it is excluded from deployment picks.
-  # ---------------------------------------------------------------------------
   allowed_fails: 5
   cooldown_time: 60
 
-  # ---------------------------------------------------------------------------
-  # PER-MODEL ROUTING STRATEGIES (routing_groups)
-  # ---------------------------------------------------------------------------
-  # The global routing_strategy above applies to any model group NOT listed
-  # here. Each group below overrides the strategy for specific model_name
-  # values, so different tiers can behave differently.
-  # Docs: https://docs.litellm.ai/docs/routing#routing-groups
-  #
-  # flash-tier -> cost-based-routing:
-  #   Within order 1 (V4.1 Flash and Qwen 3.8 Omni Flash), picks the
-  #   CHEAPEST healthy deployment based on model_info / base_model pricing.
-  #   Example: if V4.1 costs $0.15/M and Qwen costs $0.40/M, V4.1 is picked.
-  #
-  #   FAILURE SEMANTICS (verified against litellm/router.py, not intuition):
-  #   A single failure on V4.1 does NOT re-pick Qwen. num_retries re-runs
-  #   cost-based-routing, which deterministically returns the SAME cheapest
-  #   deployment - for retryable errors (429/5xx/timeout) the failed
-  #   deployment is NOT excluded. After retries are exhausted the router
-  #   escalates to the next ORDER tier (V4 Flash), SKIPPING the same-tier
-  #   Qwen. Qwen only receives traffic once V4.1 is cooled down (fails >
-  #   allowed_fails in the window) or is filtered out (tpm/rpm limits).
-  #   For a strict V4.1 -> Qwen -> V4 Flash chain, give each deployment its
-  #   OWN order (1/2/3 ranked by cost); the routing strategy then has one
-  #   candidate per tier and no longer chooses.
-  #
-  # pro-tier -> latency-based-routing:
-  #   Picks the FASTEST responding deployment in the pro-tier group
-  #   (DeepSeek V4 Pro / Qwen 3.7 Plus). Latency is measured from recent
-  #   request/response times. The lowest_latency_buffer: 0.5 means "consider
-  #   any deployment within 50% of the fastest", so the single fastest
-  #   deployment is not overwhelmed.
-  # ---------------------------------------------------------------------------
-  routing_groups:
-    - group_name: pro-latency-optimized
-      models: [pro-tier]
-      routing_strategy: latency-based-routing
-      routing_strategy_args:
-        lowest_latency_buffer: 0.5
-    - group_name: flash-cost-optimized
-      models: [flash-tier]
-      routing_strategy: cost-based-routing
-
-
-  # ---------------------------------------------------------------------------
-  # REDIS (for multi-instance deployments)
-  # ---------------------------------------------------------------------------
-  # Required when running multiple LiteLLM instances behind a load balancer.
-  # Enables shared rate limiting and router state.
-  # ---------------------------------------------------------------------------
-  # redis_host: os.environ/REDIS_HOST
-  # redis_port: 6379
-  # redis_password: os.environ/REDIS_PASSWORD
-
-# =============================================================================
-# GENERAL SETTINGS
-# =============================================================================
-# Server-level settings.
-# Documentation: https://docs.litellm.ai/docs/proxy/config_settings#general_settings---reference
-# =============================================================================
+  # # Per-group routing strategy overrides
+  # routing_groups:
+  #   - group_name: pro-latency-optimized
+  #     models: [pro-tier]
+  #     routing_strategy: latency-based-routing
+  #     routing_strategy_args:
+  #       lowest_latency_buffer: 0.5
+  #   - group_name: flash-cost-optimized
+  #     models: [flash-tier]
+  #     routing_strategy: cost-based-routing
+  #   - group_name: ultra-latency-optimized
+  #     models: [ultra-tier]
+  #     routing_strategy: latency-based-routing
+  #     routing_strategy_args:
+  #       lowest_latency_buffer: 0.5
+  #   - group_name: flash-lite-cost-optimized
+  #     models: [flash-lite-tier]
+  #     routing_strategy: cost-based-routing
 
 general_settings:
-  # ---------------------------------------------------------------------------
-  # MASTER KEY
-  # ---------------------------------------------------------------------------
-  # Admin credential for the proxy. Alternative to LITELLM_MASTER_KEY env var.
-  # The env var takes precedence if both are set.
-  # ---------------------------------------------------------------------------
-  # master_key: os.environ/LITELLM_MASTER_KEY
-
-  # ---------------------------------------------------------------------------
-  # STORE MODEL IN DB
-  # ---------------------------------------------------------------------------
-  # When true, enables Admin UI model management and hybrid config mode.
-  # Models added via UI are stored in database and load-balanced with YAML models.
-  # Database values override YAML values on conflict (except model_list which is additive).
-  # Documentation: https://docs.litellm.ai/docs/proxy/configs#configyaml-vs-database-settings
-  # ---------------------------------------------------------------------------
+  # Enable Admin UI model management; required for the DB-managed tier models.
   store_model_in_db: true
-
-  # Save the each request payload in the db (requets messages and response messages in teh logs)
+  # Persist request and response payloads in spend logs
   store_prompts_in_spend_logs: true
 
-  # ---------------------------------------------------------------------------
-  # DATABASE URL
-  # ---------------------------------------------------------------------------
-  # PostgreSQL connection string. Alternative to DATABASE_URL env var.
-  # Required for: virtual keys, budgets, spend tracking, Admin UI
-  # ---------------------------------------------------------------------------
-  # database_url: os.environ/DATABASE_URL
-
-# =============================================================================
-# ENVIRONMENT VARIABLES
-# =============================================================================
-# Set environment variables for the proxy process.
-# These are available to all config values via os.environ/<VAR_NAME>
-# Documentation: https://docs.litellm.ai/docs/proxy/config_settings#environment-variables---reference
-# =============================================================================
-
 environment_variables:
-  # ---------------------------------------------------------------------------
-  # REDIS CONFIGURATION
-  # ---------------------------------------------------------------------------
-  # Used by cache and router_settings when running multiple instances.
-  # ---------------------------------------------------------------------------
-  # REDIS_HOST: localhost
-  # REDIS_PORT: 6379
-  # REDIS_PASSWORD: ""
-
-# =============================================================================
-# ADDITIONAL CONFIGURATION OPTIONS (COMMENTED OUT)
-# =============================================================================
-# These are advanced options you may want to explore in the future.
-# Uncomment and modify as needed.
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# FALLBACKS
-# -----------------------------------------------------------------------------
-# Automatically retry with a different model if the primary fails.
-# Documentation: https://docs.litellm.ai/docs/routing/fallbacks
-# -----------------------------------------------------------------------------
-# model_fallbacks:
-#   - pro-tier: ["flash-tier"]  # If pro-tier fails, try flash-tier
-
-# -----------------------------------------------------------------------------
-# CONTEXT WINDOW FALLBACKS
-# -----------------------------------------------------------------------------
-# Automatically switch to a model with larger context if input is too long.
-# Documentation: https://docs.litellm.ai/docs/routing/context_window_fallbacks
-# -----------------------------------------------------------------------------
-# context_window_fallbacks:
-#   - flash-tier:
-#       max_tokens: 8192
-#       fallback: pro-tier
-
-# -----------------------------------------------------------------------------
-# CONTENT POLICY MODERATION
-# -----------------------------------------------------------------------------
-# Screen requests/responses for policy violations.
-# Documentation: https://docs.litellm.ai/docs/proxy/guardrails
-# -----------------------------------------------------------------------------
-# guardrails:
-#   - guardrail_name: "prompt-injection-check"
-#     guardrail_type: "prompt_injection"
-#     enabled: true
-
-# -----------------------------------------------------------------------------
-# RATE LIMITING
-# -----------------------------------------------------------------------------
-# Global rate limits (per-key limits are set when creating keys).
-# Documentation: https://docs.litellm.ai/docs/proxy/users
-# -----------------------------------------------------------------------------
-# max_parallel_requests: 100
-# tpm_limit: 1000000
-# rpm_limit: 10000
-
-# -----------------------------------------------------------------------------
-# LOGGING & OBSERVABILITY
-# -----------------------------------------------------------------------------
-# Documentation: https://docs.litellm.ai/docs/observability/callbacks
-# -----------------------------------------------------------------------------
-# otel_export: true  # OpenTelemetry
-# otel_exporter_name: "litellm"
