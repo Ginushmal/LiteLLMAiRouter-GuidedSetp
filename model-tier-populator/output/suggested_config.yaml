@@ -1,8 +1,0 @@
-# Suggested task-profile values derived from provider docs.
-# Review and copy into config.yaml if they differ from your workload.
-# This file is advisory only; the pipeline never applies it automatically.
-
-note: No provider per-request estimates found; current config values kept.
-task_profile:
-  cache_hit_rate: 0.98
-  input_output_ratio: 4.0
