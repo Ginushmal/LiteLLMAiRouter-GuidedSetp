@@ -51,9 +51,10 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [x] 5.5 Deployment `order` + failover
 - [x] 5.6 Fallbacks (different model groups)
 - [x] 5.7 Reliability knobs in action: `num_retries` / `allowed_fails` / `cooldown_time` / `timeout` / retry policy  ← semantics verified against upstream source (failover: retries don't exclude the failed deployment; cooldown is cross-request)
-- [ ] 5.8 Other strategies hands-on: `least-busy`, `usage-based-routing-v2`, `latency-based-routing`, `cost-based-routing` + `routing_strategy_weight`
-- [ ] 5.9 Context-window fallbacks & content-policy fallbacks
-- [ ] 5.10 Health checks / cooldown behavior under real failures
+- [x] 5.8 Configured fallbacks through pre-routing auto-router tiers, including tested `_target_order` workaround (VPS LiteLLM 1.103.0; undocumented)
+- [ ] 5.9 Other strategies hands-on: `least-busy`, `usage-based-routing-v2`, `latency-based-routing`, `cost-based-routing` + `routing_strategy_weight`
+- [ ] 5.10 Context-window fallbacks & content-policy fallbacks
+- [ ] 5.11 Health checks / cooldown behavior under real failures
 
 ## Track 6 - Identity: Keys, Teams, Users `[CORE DONE]`
 
@@ -158,9 +159,10 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 
 ## Track 16 - Pitfalls & Reference `[ONGOING]`
 
-- [x] 16.1 Common pitfalls 1-18 documented
+- [x] 16.1 Common pitfalls 1-20 documented
 - [x] 16.2 Quick reference (Docker / API / cost-map diagnostics)
 - [ ] 16.3 Keep appending as new pitfalls are found
+- [x] 16.4 Advertised token limits (`model_info`) + model-info discovery defaults; PATCH vs POST update semantics (2026-10-19)
 
 ---
 

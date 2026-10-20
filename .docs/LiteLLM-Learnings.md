@@ -336,6 +336,55 @@ model_list:
 
 When an app requests `model: "pro-tier"`, LiteLLM load-balances between DeepSeek V4 Pro and Qwen 3.7 Plus.
 
+### Token Limits & `model_info`
+
+Every deployment can carry token limits in `model_info`. They are what clients
+read from `/v1/model/info` to size their requests.
+
+| Field | Meaning |
+|-------|---------|
+| `max_input_tokens` | Largest **input** (prompt) the model accepts |
+| `max_output_tokens` | Largest **output** (completion) the model can produce |
+| `max_tokens` | Completion cap LiteLLM reports (cost-map convention: the output limit) |
+
+**Discovery fills the gaps — wrongly for output.** For OpenAI-compatible
+deployments LiteLLM refreshes model info from the provider's `/models` response
+(`context_length`). When no output limit is published, discovery mirrors the
+**context window** into `max_output_tokens` (verified in
+`litellm/llms/openai_like/model_info.py`). The gateway then advertises, say,
+1,050,000 output tokens for a model that can produce 128,000.
+
+**Precedence:** values you configure in `model_info` win over discovered ones —
+so stating the limits explicitly is the reliable fix.
+
+```yaml
+model_list:
+  - model_name: pro-tier
+    litellm_params:
+      model: openai/gpt-6.1-sol
+      api_base: https://api.commandcode.ai/provider/v1
+    model_info:
+      max_input_tokens: 922000      # context 1,050,000 - output 128,000
+      max_output_tokens: 128000
+      max_tokens: 128000
+```
+
+**Updating them:** the legacy `POST /model/update` writes `litellm_params` but
+**ignores `model_info`** (its own docstring points at the PATCH route).
+`PATCH /model/{model_id}/update` merges `model_info` per key and keeps fields it
+does not receive. `{model_id}` is the stored `model_info.id`, and it travels in
+the URL **path** — so ids must stay URL-safe; a `/` is decoded before routing
+and either splits the route or arrives as a literal `%2F`.
+
+> Rule of thumb: `max_input_tokens = context - max_output_tokens`. The provider's
+> context window is the authority for context; the output cap is the model's own
+> capability (our model-pipeline reads it from models.dev).
+
+**Docs:** https://docs.litellm.ai/docs/proxy/model_management ·
+Source: `litellm/proxy/management_endpoints/model_management_endpoints.py`
+(`patch_model`, `update_db_model`), `litellm/llms/openai_like/model_info.py`,
+and the models.dev catalog (https://models.dev/api.json) for output caps.
+
 ---
 
 ## 7. Pricing & Cost Tracking
@@ -543,7 +592,39 @@ model_list:
 - The order hop only happens when the group has **≥2 distinct order values**. With no `order`, or a single level, there is no order-based failover
 - `ContextWindowExceededError` / `ContentPolicyViolationError` skip order-based failover (they have dedicated fallbacks)
 
+### Auto-router selections and tier order fallbacks
+
+An auto-router such as `smart-router` first chooses a **model group** (for example, `pro-tier`); LiteLLM then chooses a deployment in that group. A direct call to `pro-tier` and a call through `smart-router` are not identical for automatic order failover: the router builds its automatic order chain from the model name in the original request. For `smart-router`, that is the router entry, not the tier it selected. In our observed LiteLLM 1.103.0 deployment, a direct tier call automatically advanced through order levels, while the auto-router call did not.
+
+To make tier-level order retries available on the auto-router path, configure fallback targets under the tier name. The following dict-entry form asks LiteLLM to retry the same tier, restricted to each later order level:
+
+```yaml
+router_settings:
+  fallbacks:
+    - pro-tier:
+        - {model: pro-tier, _target_order: 2}
+        - {model: pro-tier, _target_order: 3}
+        - {model: pro-tier, _target_order: 4}
+```
+
+- The initial `pro-tier` request uses the tier's normal lowest-order selection and retry policy. If it still fails after retries, the configured entries try order 2, then 3, then 4, in sequence.
+- This uses order numbers, not provider model names or deployment IDs. Add an entry for each order level you want as a fallback.
+- Our `config.yaml` applies this pattern to `pro-tier`, `flash-tier`, `ultra-tier`, and `flash-lite-tier`, with fallback orders 2–5.
+- **Status:** this dict form with `_target_order` is not shown in the official fallback docs. It was confirmed working in our VPS deployment running LiteLLM 1.103.0; treat it as a version-sensitive workaround, not a documented stable interface.
+- Standard `fallbacks` between model groups are documented and are a separate feature: for example, `pro-tier` can fall back to `flash-tier`.
+- Because `router_settings.fallbacks` is shared by direct tier calls and auto-router calls, a direct call may first exhaust its automatic order chain and then reach the configured order-2+ entries. If every deployment fails, this can retry order levels already attempted; watch retry counts and cost.
+
+**Flow:**
+
+```
+Direct call:  pro-tier → order 1 fails → automatic order 2 → order 3 ...
+Auto-router:  smart-router → selects pro-tier → order 1 fails
+                                      └→ configured tier fallback → order 2 → order 3 ...
+```
+
 **What same-tier failover does NOT do:**
+
+For both paths, a routing strategy does not by itself guarantee that a failed deployment is replaced by a sibling with the same `order`. See the next section for that behavior.
 Within one `order` tier there is **no automatic sibling failover**. When the picked deployment fails, `num_retries` re-runs selection; for retryable errors (429/5xx/timeout) the failed deployment is **not excluded**, so a deterministic strategy (`cost-based-routing`) re-picks the **same** deployment every attempt. The router then escalates to the **next order tier**, skipping the untried sibling. (The one exception: 401/403 auth errors — the failed deployment *is* excluded, so a sibling can be picked.)
 
 ### Example: cost-based-routing + order
@@ -597,16 +678,21 @@ router_settings:
 | Strict priority chain (cheapest → … → backup) | unique `order` per deployment (`1`/`2`/`3`, ranked by cost). Each tier has one candidate, so the routing strategy no longer chooses |
 | Dynamic cost pick **with** same-tier failover | `routing_strategy: simple-shuffle` + `enable_weighted_failover: true` (re-picks in the group, excluding the failed deployment) — **not** compatible with cost/latency strategies (they return early) |
 | Dynamic cost pick, **no** same-tier failover | cost/latency strategy + shared `order` tier. The broken deployment takes over only after cooldown (`allowed_fails`) |
-| Escape to another group | `fallbacks: [{"flash-tier": ["pro-tier"]}]` |
+| Escape to another group | `router_settings.fallbacks: [{"pro-tier": ["flash-tier"]}]` |
 
 ### Fallbacks (Different Model Groups)
 
-Switch to a different model group on total failure:
+Configured fallbacks can switch to another model group after the primary request fails. For example, route a failed `pro-tier` request to `flash-tier`:
 
 ```yaml
-model_fallbacks:
-  - pro-tier: ["flash-tier"]  # If pro-tier fails completely, try flash-tier
+router_settings:
+  fallbacks:
+    - pro-tier: ["flash-tier"]
 ```
+
+This is different from deployment `order`: `order` moves between deployments within one model group; this fallback moves to a different model group. The tier-keyed `_target_order` pattern above uses configured fallbacks to retry a selected tier at a specified order level.
+
+**Docs:** https://docs.litellm.ai/docs/proxy/reliability · https://docs.litellm.ai/docs/proxy/load_balancing#deployment-ordering-priority
 
 ---
 
@@ -984,6 +1070,18 @@ spec:
 **Problem:** with two deployments sharing a model name and the same `order` (or no `order` at all), a failure of the picked deployment does **not** make the router try the sibling. Retries re-run the routing strategy; for retryable errors (429/5xx/timeout) the failed deployment is **not** excluded, so `cost-based-routing` re-picks the same cheapest one every attempt. After retries are exhausted the router escalates to the next `order` tier (only if the group has ≥2 distinct orders) or the generic `fallbacks` (only if configured) — with neither, the request just fails.  
 **Solution:** for a deterministic "X → Y → Z" chain give each deployment its own `order` (rank by cost). For same-tier failover use `enable_weighted_failover: true` **with** `routing_strategy: simple-shuffle` (it is ignored for cost/latency strategies). Lower `allowed_fails` so cooldown shifts traffic to a healthy sibling faster. Note `enable_weighted_failover` defaults to **false** and order-based failover needs **≥2 distinct** `order` values.
 
+### 19. Expecting auto-router calls to automatically advance through a selected tier's `order`
+
+**Problem:** `smart-router` may select `pro-tier`, but automatic order failover is built from the originally requested model name (`smart-router`), not necessarily from the tier selected internally. In our VPS test, direct `pro-tier` calls advanced through order levels, while calls through `smart-router` needed a configured tier fallback.
+
+**Solution:** add `router_settings.fallbacks` keyed by each selected tier, with dict entries such as `{model: pro-tier, _target_order: 2}`, then one entry for each later order. This avoids hardcoding provider model names. The `_target_order` dict form is undocumented; it worked in our LiteLLM 1.103.0 VPS deployment, so retest after version upgrades. See §8, “Auto-router selections and tier order fallbacks.”
+
+### 20. Advertising the context window as the output limit
+
+**Problem:** a deployment with no explicit `max_output_tokens` can advertise its **context window** as the output cap — model-info discovery fills the missing value from `context_length` (and a cost-map entry can fill it too). Clients read that from `/v1/model/info`, ask for far more completion tokens than any model can produce, and *every* deployment in the chain rejects the request; failover cannot recover, so the whole tier looks down.
+
+**Solution:** set `model_info.max_output_tokens` (and `max_tokens`) per deployment, with `max_input_tokens = context − output`. Apply changes with `PATCH /model/{model_id}/update` (`POST /model/update` silently ignores `model_info`) and keep the stored id URL-safe — no `/`. See §6, “Token Limits & `model_info`”.
+
 ---
 
 ## 13. Quick Reference
@@ -1015,6 +1113,10 @@ curl http://localhost:4000/health/readiness
 ```bash
 # List models
 curl http://localhost:4000/model/info -H "Authorization: Bearer $MASTER_KEY"
+
+# Advertised token limits per deployment (what clients size requests from)
+curl -s http://localhost:4000/model/info -H "Authorization: Bearer $MASTER_KEY" \
+  | jq '.data[] | {model_name, id: .model_info.id, in: .model_info.max_input_tokens, out: .model_info.max_output_tokens}'
 
 # List keys
 curl http://localhost:4000/key/list -H "Authorization: Bearer $MASTER_KEY"
@@ -1074,7 +1176,7 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 | Users & Budgets | https://docs.litellm.ai/docs/proxy/users |
 | Load Balancing | https://docs.litellm.ai/docs/proxy/load_balancing |
 | Routing Strategies | https://docs.litellm.ai/docs/routing |
-| Fallbacks | https://docs.litellm.ai/docs/routing/fallbacks |
+| Fallbacks | https://docs.litellm.ai/docs/proxy/reliability |
 | Custom Pricing | https://docs.litellm.ai/docs/proxy/custom_pricing |
 | Custom Cost Map | https://docs.litellm.ai/docs/proxy/custom_model_cost_map |
 | Caching | https://docs.litellm.ai/docs/caching/gpt_cache |
@@ -1105,6 +1207,7 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 - `model_name` is an alias/group name for load balancing
 - `order` provides failover priority (deployment property)
 - `routing_groups` override strategy per model group
+- `router_settings.fallbacks` can move a failed request to another group; a tier-keyed `_target_order` fallback also lets the auto-router retry later orders (undocumented shape; verified on LiteLLM 1.103.0)
 - Cost lookup is a candidate chain (base_model → response model → `litellm_params.model`); the reliable fix is to price the exact `litellm_params.model` key
 - Display cost (UI) and accounted cost (spend logs) are separate paths — verify with a spend log
 - Custom cost maps must be a **full copy** of the upstream map (small maps are silently rejected)
@@ -1124,4 +1227,4 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 
 ---
 
-*Guide created from hands-on exploration and official documentation verification. Last updated: 2026-09-28*
+*Guide created from hands-on exploration and official documentation verification. Last updated: 2026-10-16*

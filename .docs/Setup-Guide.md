@@ -260,6 +260,43 @@ model_list:
 
 > **Gotcha:** with two deployments in order 1 and a deterministic strategy like `cost-based-routing`, a failure re-picks the *same* deployment on every retry and then escalates to order 2 — the order-1 sibling is skipped. Same-tier failover needs `enable_weighted_failover` (which requires `simple-shuffle`).
 
+### Auto-router tier order fallbacks
+
+A direct call to a tier can advance to the next `order` automatically. Calls through `smart-router` first select a tier, but automatic order fallback may use the requested name (`smart-router`) rather than that selected tier. The following configured fallback pattern was tested successfully on the VPS running LiteLLM 1.103.0; `_target_order` in fallback entries is **undocumented**, so verify it again after LiteLLM upgrades.
+
+The local `config.yaml` has this pattern for all four DB-managed tiers (`order` 2–5):
+
+```yaml
+router_settings:
+  fallbacks:
+    - pro-tier:
+        - {model: pro-tier, _target_order: 2}
+        - {model: pro-tier, _target_order: 3}
+        - {model: pro-tier, _target_order: 4}
+        - {model: pro-tier, _target_order: 5}
+    - flash-tier:
+        - {model: flash-tier, _target_order: 2}
+        - {model: flash-tier, _target_order: 3}
+        - {model: flash-tier, _target_order: 4}
+        - {model: flash-tier, _target_order: 5}
+    - ultra-tier:
+        - {model: ultra-tier, _target_order: 2}
+        - {model: ultra-tier, _target_order: 3}
+        - {model: ultra-tier, _target_order: 4}
+        - {model: ultra-tier, _target_order: 5}
+    - flash-lite-tier:
+        - {model: flash-lite-tier, _target_order: 2}
+        - {model: flash-lite-tier, _target_order: 3}
+        - {model: flash-lite-tier, _target_order: 4}
+        - {model: flash-lite-tier, _target_order: 5}
+```
+
+Each entry retries the same tier but restricts selection to one order level. Keep the entries aligned with the order values actually present in the DB-managed tier deployments. After editing `config.yaml`, restart LiteLLM as described under **Applying changes**.
+
+To verify after a LiteLLM upgrade, send a short request through `smart-router` and inspect **Usage / Logs**: confirm it succeeds and that the serving model is at a later order when the first deployment fails. In spend-log data, `attempted_fallbacks` should be greater than zero when a configured fallback was used.
+
+> For a documented fallback to a different model group, use the standard `router_settings.fallbacks` form shown in LiteLLM's [Fallbacks documentation](https://docs.litellm.ai/docs/proxy/reliability). The `_target_order` dict form above is a tested, version-sensitive workaround, not an official documented interface.
+
 ## Step 11 — Per-model strategies with `routing_groups`
 
 Give each group its own strategy. `group_name` also becomes a **callable model** (it shows up in the UI picker).
@@ -408,6 +445,9 @@ On the Create Key form, set user, team, models, budget, duration. Notes:
 
 ### New environment variable has no effect
 `restart` doesn't inject new env vars. Use `up -d --force-recreate litellm`.
+
+### `smart-router` does not try later tier orders
+Direct tier calls may use automatic `order` failover, while the auto-router path needs the tier-keyed fallback entries in `config.yaml`. The `_target_order` form is undocumented; check it again after LiteLLM upgrades.
 
 ### Virtual key not working
 1. Not blocked / not expired (Virtual Keys page).

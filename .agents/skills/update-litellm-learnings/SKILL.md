@@ -180,6 +180,8 @@ Always fetch and verify against these official sources before writing:
 | Router utils: routing groups (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/routing_groups.py |
 | Router strategy: lowest cost (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_strategy/lowest_cost.py |
 | Router strategy: lowest latency (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_strategy/lowest_latency.py |
+| Model management endpoints (source: `patch_model`, `update_db_model` — PATCH merges `model_info`, POST `/model/update` ignores it) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/management_endpoints/model_management_endpoints.py |
+| Types / utils (source: `server_derived_pricing_fields`, `echoed_cost_map_fields`, `without_server_derived_pricing` — which `model_info` keys the write path keeps) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/types/utils.py |
 
 ## Current Structure
 

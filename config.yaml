@@ -67,12 +67,11 @@ litellm_settings:
 
   # Defaults and hard ceilings inherited by new keys/teams (UI or API)
   default_key_generate_params:
-    models: ["flash-cost-optimized"]
+    models: ["smart-router"]
     max_budget: 10
     budget_duration: "30d"
-    duration: "90d"
     rpm_limit: 60
-    tpm_limit: 100000
+    tpm_limit: 1000000
 
   upperbound_key_generate_params:
     max_budget: 100
@@ -80,13 +79,13 @@ litellm_settings:
     duration: "90d"
     max_parallel_requests: 50
     rpm_limit: 500
-    tpm_limit: 500000
+    tpm_limit: 1000000
 
   default_team_params:
     max_budget: 200
     budget_duration: "30d"
     rpm_limit: 500
-    tpm_limit: 500000
+    tpm_limit: 1000000
     models: ["flash-tier", "pro-tier"]
     team_member_permissions: ["/key/generate", "/key/info", "/key/list"]
 
@@ -96,6 +95,37 @@ router_settings:
   timeout: 60
   allowed_fails: 5
   cooldown_time: 60
+
+  # Order-based fallbacks for the tiers (undocumented LiteLLM shape - verify).
+  # Direct calls to a tier hop `order: 1 -> 2 -> ...` automatically when an entry
+  # fails; calls arriving through the auto-router (smart-router) do not, because
+  # LiteLLM builds that chain from the requested name instead of the tier it
+  # picked. Each entry below repeats the hop by hand: "retry <tier>, but only its
+  # order-N entries".
+  # Verify after deploying: send one request to smart-router, then check that
+  # LiteLLM_SpendLogs shows status=success with attempted_fallbacks >= 1. If it
+  # fails with attempted_fallbacks=0, this shape is not accepted - remove it.
+  fallbacks:
+    - pro-tier:
+        - {model: pro-tier, _target_order: 2}
+        - {model: pro-tier, _target_order: 3}
+        - {model: pro-tier, _target_order: 4}
+        - {model: pro-tier, _target_order: 5}
+    - flash-tier:
+        - {model: flash-tier, _target_order: 2}
+        - {model: flash-tier, _target_order: 3}
+        - {model: flash-tier, _target_order: 4}
+        - {model: flash-tier, _target_order: 5}
+    - ultra-tier:
+        - {model: ultra-tier, _target_order: 2}
+        - {model: ultra-tier, _target_order: 3}
+        - {model: ultra-tier, _target_order: 4}
+        - {model: ultra-tier, _target_order: 5}
+    - flash-lite-tier:
+        - {model: flash-lite-tier, _target_order: 2}
+        - {model: flash-lite-tier, _target_order: 3}
+        - {model: flash-lite-tier, _target_order: 4}
+        - {model: flash-lite-tier, _target_order: 5}
 
   # # Per-group routing strategy overrides
   # routing_groups:

@@ -1,0 +1,378 @@
+# =============================================================================
+# model-pipeline configuration
+# =============================================================================
+# Every knob the pipeline uses lives here. Nothing is hardcoded in the source.
+# Each setting has a comment explaining WHAT it is, HOW it works, its EFFECT,
+# WHEN to change it, and HOW to change it.
+#
+# Secrets are NOT stored here — reference environment variable names instead.
+# The pipeline reads them from the repo-root .env file (D:\Softwares\LiteLLMAiRouter\.env).
+# =============================================================================
+
+paths:
+  # Where the pipeline writes artifacts, relative to the model-pipeline/ root.
+  # raw_scrapes : verbatim fetched HTML/JSON, for diagnosing scraping breakage.
+  # logs        : structured scrape logs (url, status, timestamp, parse counts).
+  # output      : the reviewable artifacts produced by each phase.
+  raw_scrapes: data/raw
+  logs: data/logs
+  output: output
+
+# -----------------------------------------------------------------------------
+# TASK PROFILE
+# -----------------------------------------------------------------------------
+# WHAT: The token shape of one representative "task" (one agentic coding
+#       session/turn). Used to convert per-token provider prices into a single
+#       cost-per-task figure.
+# HOW:  cost_per_task = fresh_input * P_in
+#                     + cached_input * P_cache_read
+#                     + output       * P_out
+#                     + reasoning    * P_reasoning
+#                     + cache_write  * P_cache_write
+# EFFECT: Larger input/output counts raise the cost of every model; because
+#       cache-read is far cheaper than fresh input, a higher cache_hit_rate
+#       rewards models/providers with cheap cache pricing.
+# WHEN: These defaults are auto-suggested by the `fetch` phase from the
+#       providers' own published per-request estimates. Review
+#       output/suggested_config.yaml and copy values here if your real traffic
+#       differs (e.g. longer sessions = more cached tokens).
+# HOW: Edit the numbers. `per_request` is one request; `requests_per_task`
+#       scales it to a full task.
+task_profile:
+  # Tokens consumed by a single agentic coding request (provider-published
+  # ballpark: ~800 fresh input, ~50k cache-read, ~125-200 output).
+  per_request:
+    input: 800 # fresh (uncached) input tokens
+    cached: 50000 # cache-hit input tokens (reused across turns)
+    output: 200 # answer tokens the model generates
+    reasoning: 500 # internal thinking tokens (billed at output rate)
+    cache_write: 2000 # tokens written to cache for future turns
+  # How many requests make up one "task". Increase for long multi-turn sessions.
+  requests_per_task: 5
+  # Fallback cache-hit rate (fraction of input tokens that are cache reads).
+  # Used by the effective-token cost derivation when AA lacks a model.
+  # The providers observe ~98% for agentic coding; 0.98 is a good default.
+  cache_hit_rate: 0.98
+  # Fallback input:output token ratio, used to split AA's cost_per_task back
+  # into effective input/output token counts when only free-tier AA is
+  # available. 4 means 4 input tokens per 1 output token.
+  input_output_ratio: 4.0
+  # Fallback reasoning price multiplier vs output price (reasoning tokens are
+  # usually billed as output). 1.0 = same as output price.
+  reasoning_price_multiplier: 1.0
+
+# -----------------------------------------------------------------------------
+# NMB (Net Monetary Benefit) — the model value score
+# -----------------------------------------------------------------------------
+# NMB = (lambda * intelligence) - cost_per_task - (mu * latency)
+# Higher NMB = better value. Deployments are ranked by NMB within each tier.
+nmb:
+  # WHAT: lambda = willingness to pay (in dollars) per point of intelligence.
+  # HOW:  NMB = lambda * intelligence - cost. Higher lambda => intelligence
+  #       matters more relative to cost.
+  # EFFECT: High lambda picks the smartest models even when expensive; low
+  #       lambda picks cheap models. Each tier has its own lambda because the
+  #       tiers serve different priorities (Ultra = quality, Flash Lite = cost).
+  # WHEN: Change when a tier's picks feel too cheap or too expensive.
+  # HOW: Double/halve a value and re-run `score`; compare the tier lists.
+  tier_lambdas:
+    Ultra: 1.0 # quality-first tier: pay a lot per intelligence point
+    Pro: 0.2 # balanced: ~$1 per intelligence point
+    Flash: 0.001 # cost-sensitive: prefer cheap over smart
+    Flash Lite: 0.0001 # very cost-sensitive: cheapest wins
+
+  # WHAT: rho (ρ) = latency share of the tier's NMB decision. The pipeline
+  #       derives mu (dollars of NMB lost per second) from it.
+  # HOW:  mu = rho × spread ÷ median_latency, where
+  #         spread         = max NMB - min NMB of the tier's eligible models
+  #                          (measured without the latency term), and
+  #         median_latency = median AA end-to-end response time of those models.
+  #       So a model at the typical latency loses rho × spread NMB.
+  # EFFECT: rho = 0.2 -> latency may swing 20% of the tier's ranking range;
+  #       0.5 -> speed owns half the decision; 0 disables the term.
+  # WHY A SHARE: raw NMB scales differ per tier (Ultra spread ~10, Flash ~5.5),
+  #       so the same mu means different things. The share behaves identically
+  #       everywhere: 0.2 is 20% of that tier's decision range in every tier.
+  # WHEN: Raise for tiers where speed matters more than quality or cost.
+  # HOW:  One number applies the same share to every tier; a mapping lets tiers
+  #       differ (below, Flash tiers spend more of their decision on speed).
+  # this doesnt really works that well since some models doesnt have latency data , 
+  # and we currently dont ahve a way to know the latency of those sped up proveider models like mimo 2.6 ultra speed .
+  latency_rho:
+    Ultra: 0.0
+    Pro: 0.0
+    Flash: 0.0
+    Flash Lite: 0.0
+
+  # WHAT: Tier floors = minimum intelligence to enter a tier, as a fraction of
+  #       the current SOTA (best available) intelligence score.
+  # HOW:  A model joins the highest tier whose floor it meets. Floors auto-scale
+  #       as new models move SOTA.
+  # EFFECT: Defines what counts as Ultra vs Pro vs Flash vs Flash Lite.
+  # WHEN: Raise a floor to make a tier more exclusive; lower it to widen.
+  tier_floors:
+    Ultra: 0.8 # >= 80% of SOTA intelligence
+    Pro: 0.6 # >= 60%
+    Flash: 0.35 # >= 35%
+    Flash Lite: 0.0 # everything else
+
+  # WHAT: How many model-slots (NMB groups) to keep per tier.
+  # HOW:  Deployments are grouped by (canonical model, cost_per_task). Groups
+  #       are ranked by NMB and the top K are selected. Same-price provider
+  #       siblings form ONE group (load-balanced) and count as one toward K.
+  # EFFECT: Larger K = more failover options; smaller = tighter curation.
+  # WHEN: Increase for resilience, decrease for a cleaner list.
+  top_k_per_tier: 10
+
+# -----------------------------------------------------------------------------
+# PRICING POLICIES
+# -----------------------------------------------------------------------------
+pricing:
+  # WHAT: How to collapse a provider's context-length-tiered prices into one.
+  # OPTIONS: average | base | high  (average = mean of the tiers)
+  # WHEN: Use `average` to avoid favouring a model that is cheap for short
+  #       context but expensive for long context.
+  context_tier_policy: average
+  # WHAT: The window (UTC) during which you actually send traffic. Used to
+  #       weight peak vs off-peak prices for providers that bill differently
+  #       by time of day (DeepSeek-style).
+  # HOW:  The pipeline computes the fraction of this window that overlaps each
+  #       of a model's peak bands and produces a weighted average price.
+  # WHEN: Set to your active hours. Default = 08:00-18:00 Asia/Colombo (UTC+5:30).
+  active_window_utc:
+    start: "02:30"
+    end: "12:30"
+  # Days of the week your window applies to (0=Mon .. 6=Sun).
+  active_days: [0, 1, 2, 3, 4]
+  # Peak pricing bands (UTC). These are the DeepSeek peak windows both
+  # providers publish (Mon-Fri). A model with peak/off-peak pricing gets a
+  # weighted-average price using active_window_utc above.
+  peak_windows_utc:
+    - ["01:00", "04:00"]
+    - ["06:00", "10:00"]
+
+# -----------------------------------------------------------------------------
+# ARTIFICIAL ANALYSIS (intelligence + reference prices)
+# -----------------------------------------------------------------------------
+aa:
+  # Free-tier models list (intelligence index + input/output/cache prices +
+  # cost_per_task.total_cost). Pro-tier per-task token counts are optional.
+  free_url: https://artificialanalysis.ai/api/v2/language/models/free
+  pro_url: https://artificialanalysis.ai/api/v2/language/models
+  api_key_env: ARTIFICIAL_ANALYSIS_API_KEY
+  page_size: 200
+
+# -----------------------------------------------------------------------------
+# TOKEN LIMITS (models.dev)
+# -----------------------------------------------------------------------------
+# WHAT: models.dev is a public, community-maintained catalog of LLM limits.
+#       Providers publish only a *context window*; models.dev publishes a real
+#       per-model *output* limit, which is the value we advertise to LiteLLM.
+# WHY: Without an explicit output limit, LiteLLM's model-info discovery mirrors
+#       the context window into max_output_tokens, so clients compute completion
+#       budgets no model can serve (the tier-outage bug this pipeline fixes).
+# HOW: `fetch` downloads this file (saved under data/raw/modelsdev and logged
+#       under data/logs/modelsdev), resolves one output limit per model, and
+#       `score` emits it as model_info.max_output_tokens (+ max_tokens). The
+#       input limit is derived as `context - output`; the context window itself
+#       always stays the provider's own /models value.
+#       Lookup order: the provider's own catalog entry (exact id), then a
+#       normalized model-id match inside that provider, then another provider's
+#       entry. The `dedup` suffix lists above decide what "normalized" ignores
+#       (case, punctuation, vendor prefix, serving/version suffixes).
+#       Nothing is invented: no match = the limit stays unset and the model is
+#       flagged `unresolved` in the run output and the ranking report.
+# WHEN: Change api_url only to point at a mirror of the catalog.
+# HOW: Edit the URL. Each provider block below names the catalog provider id(s)
+#      that publish its models (e.g. opencode -> opencode-go).
+models_dev:
+  api_url: https://models.dev/api.json
+
+# -----------------------------------------------------------------------------
+# JEV (TypeSafe System One decision model) — used for name matching
+# -----------------------------------------------------------------------------
+# WHAT: Jev is a System One model: it evaluates typed questions against a state
+#       and returns structured answers (choice + probabilities + confidence).
+# HOW:  We send each provider model name as `state` and the shortlisted
+#       canonical candidates as a Choice `criteria`. It is reached through the
+#       CommandCode Provider API (`/provider/v1/systemone`), so no separate
+#       TypeSafe key is needed.
+jev:
+  endpoint: https://api.commandcode.ai/provider/v1/systemone
+  model: typesafe/jev
+  api_key_env: COMMANDCODE_API_KEY
+  timeout_seconds: 60
+  # Mappings at or above this confidence are "high"; below are flagged for
+  # human review in mappings.csv. Nothing is discarded — every mapped row is
+  # written, with its confidence, so a reviewer can audit.
+  review_confidence_threshold: 0.7
+  # How many AA candidates to shortlist before asking Jev (Choice supports up
+  # to 255 options). The list is name-similarity only, with no variant filter,
+  # and always keeps the nearest slug, so the correct candidate reaches Jev.
+  candidate_shortlist_size: 80
+
+# -----------------------------------------------------------------------------
+# DE-DUPLICATION
+# -----------------------------------------------------------------------------
+dedup:
+  # Suffixes stripped during normalization before exact matching. Version
+  # suffixes (-latest, -next) are stripped from BOTH sides, so a provider name
+  # without the suffix matches the canonical that carries it.
+  strip_suffixes: ["-latest", "-next", ":free", "-free", " (latest)", " (exp)", "-preview"]
+  # Trailing serving tokens that mean "the same model, served faster" — not a
+  # different model. Applied ONLY as a fallback exact match (after the full-name
+  # match fails), so a distinct canonical that owns the token (e.g. grok-4-fast)
+  # still wins on the full name and is never merged into the base.
+  speed_suffixes: ["-fast", "-highspeed", "-ultraspeed", "-turbo", "-prime"]
+  # Substrings that hint at an effort/thinking variant and must be preserved.
+  effort_tokens: ["high", "highspeed", "max", "xhigh", "medium", "low", "thinking", "reasoning"]
+
+# -----------------------------------------------------------------------------
+# EXCLUSIONS
+# -----------------------------------------------------------------------------
+# Drop models from the tier list entirely, before ranking. Each pattern is
+# matched case-insensitively as a substring against a deployment's provider,
+# provider model ID, display name, canonical slug, and canonical name. Use it
+# for opt-outs such as contributor / training-data models.
+exclude:
+  patterns:
+    - "contributor" # e.g. Meta "Muse Spark ... Contributor" (trains on your prompts)
+    # - "muse-spark-1.3-contributor"   # or an exact provider model id / slug
+    # - "free"                         # e.g. drop every free/promo model
+  # ---------------------------------------------------------------------------
+  # Tier-scoped exclusions (optional)
+  # ---------------------------------------------------------------------------
+  # WHAT: Keep a model out of ONE tier while leaving it scored and selectable
+  #       in every other tier it qualifies for.
+  # HOW:  Key = tier display name, exactly as used by nmb.tier_floors /
+  #       tier_lambdas / latency_rho (Ultra, Pro, Flash, Flash Lite). Value =
+  #       a list of patterns, matched the same way as `patterns` above.
+  # EFFECT: The model disappears from that tier's ranking and its LiteLLM model
+  #       group. It keeps its intelligence, cost, and Pareto state, so it can
+  #       still be picked in the other tiers, and it still counts toward SOTA
+  #       (tier floors do NOT change because of a tier-scoped exclusion).
+  #       A pattern that matches a canonical slug/name removes every provider
+  #       deployment of that model from the tier; a provider-only pattern (e.g.
+  #       "opencode") removes just that provider's deployments.
+  # WHEN: A model is fine for expensive/top tiers but should not appear in the
+  #       cheap ones (or the reverse). Because tier eligibility is nested, a
+  #       strong model is a candidate in every lower tier by default.
+  # HOW:  Add `TierName: ["pattern", ...]`. An empty list means "no extra
+  #       filtering". An unknown tier name is a config error and stops the run.
+  # NOTE: Tier-scoped rules are additive to `patterns`; global patterns always
+  #       win. "Excluded from all four tiers" is NOT the same as a global
+  #       pattern: the model still influences SOTA and Pareto. Use `patterns`
+  #       when you want it out of the catalog, `tiers` when you only want it out
+  #       of a group.
+  tiers:
+    # Ultra:
+    #   - "some-flagship-model"
+    # Pro:
+    #   - "opencode"            # keep one provider out of Pro only
+    Flash:
+      - "deepseek-v4.1-flash-fast"
+    # Flash Lite: ["mimo"]
+
+
+# -----------------------------------------------------------------------------
+# TIER PINS (manual inclusion)
+# -----------------------------------------------------------------------------
+# WHAT: Force specific canonical models into a tier at the top of its failover
+#       chain, regardless of their NMB score or the tier's intelligence floor.
+# HOW:  Key = tier display name (Ultra, Pro, Flash, Flash Lite). Value = an
+#       ordered list of canonical model slugs (the `canonical_slug` field in
+#       output/tier-output.json, e.g. "claude-sonnet-4-5"). Matching is exact
+#       after trimming and lowercasing; provider model IDs do NOT match.
+# EFFECT: Resolved pins take orders 1..P in the order listed. Every provider
+#       deployment of that canonical that is not excluded from the tier shares
+#       the pin order (load-balanced by the router). Pins bypass the tier floor
+#       and consume top-K slots: with top_k_per_tier = K and P pins, at most
+#       K - P scored models are selected. If P >= K, every pin is kept and no
+#       scored models are added; a warning is reported.
+#       Pins stay in the latency calibration pool (so mu is unchanged) but are
+#       removed from NMB selection: the NMB values, relative order,
+#       primary/backup split, Pareto state, and SOTA floors of non-pinned
+#       models are unchanged. Their relative order is preserved and they are
+#       renumbered after the pin block.
+# WHEN: A model you trust must always be available in a tier even when the
+#       ranking cuts it or ranks it low. This is a hard override, not a
+#       preference; pinning many models crowds out the ranked picks.
+# HOW:  Add `TierName: ["slug-a", "slug-b"]`. An empty list means no pins. An
+#       unknown tier name is a config error. Unmatched, duplicate, or
+#       exclusion-blocked slugs are reported as warnings and skipped; the run
+#       continues.
+# NOTE: Exclusion wins. A model removed by `exclude.patterns` or by
+#       `exclude.tiers.<Tier>` cannot be pinned into that tier.
+pins:
+  tiers:
+    # Ultra:
+    #   - "claude-opus-4-5"   # order 1
+    #   - "gpt-5"             # order 2
+    # Pro:
+    #   - "claude-sonnet-4-5"
+    Flash: [deepseek-v4-1-flash]
+    # Flash Lite: []
+
+
+# -----------------------------------------------------------------------------
+# PROVIDERS
+# -----------------------------------------------------------------------------
+providers:
+  commandcode:
+    enabled: true
+    api_base: https://api.commandcode.ai/provider/v1
+    models_url: https://api.commandcode.ai/provider/v1/models
+    api_key_env: COMMANDCODE_API_KEY
+    # Pricing source (HTML catalog table).
+    pricing_url: https://commandcode.ai/models
+    # models.dev catalog provider id(s) that publish this provider's models.
+    # Provider metadata only — the model identities still come from /models.
+    models_dev_provider_ids: ["commandcode"]
+    # LiteLLM deployment defaults for this provider.
+    # LiteLLM appends the protocol path to api_base (openai -> /chat/completions,
+    # anthropic -> /v1/messages), so these are the *bases*, not full endpoints.
+    litellm:
+      # OpenAI-compatible: LiteLLM calls {base}/chat/completions.
+      openai_api_base: https://api.commandcode.ai/provider/v1
+      # Anthropic-compatible: LiteLLM calls {base}/v1/messages.
+      messages_api_base: https://api.commandcode.ai/provider
+
+  opencode:
+    enabled: false
+    api_base: https://opencode.ai/inference/go/v1
+    models_url: https://opencode.ai/inference/go/v1/models
+    api_key_env: OPENCODE_API_KEY
+    # Pricing source (Go plan docs table) and per-model endpoint table.
+    pricing_url: https://opencode.ai/v2/docs/console/go
+    # models.dev catalog provider id(s) for this provider. `opencode-go` is the
+    # Go plan's own catalog entry; plain `opencode` is its fallback.
+    models_dev_provider_ids: ["opencode-go", "opencode"]
+    # LiteLLM deployment defaults per endpoint format (verified live).
+    litellm:
+      # OpenAI-compatible: LiteLLM calls {base}/chat/completions.
+      chat_completions_api_base: https://opencode.ai/inference/go/v1
+      # Anthropic-compatible: LiteLLM calls {base}/v1/messages.
+      messages_api_base: https://opencode.ai/inference/go
+    # OpenCode rejects requests without a session header. A single static value
+    # is sent on every request (all gateway traffic shares one session).
+    extra_headers:
+      x-opencode-session: model-pipeline-gateway
+    # Endpoint protocols supported by this provider's adapter.
+    # "responses" (grok/gpt-luna/muse) and "google" (gemini) are deferred:
+    # they need extra LiteLLM wiring, so those models are excluded for now.
+    supported_endpoints: ["chat", "messages"]
+
+# -----------------------------------------------------------------------------
+# LITELLM POPULATION
+# -----------------------------------------------------------------------------
+litellm:
+  base_url: http://localhost:4000
+  master_key_env: LITELLM_MASTER_KEY
+  # Maps each pipeline tier to the LiteLLM model-group name that the existing
+  # complexity_router (Jev) routes to. Keep these names in sync with the
+  # `complexity_router_config.tiers` block in the repo-root config.yaml.
+  tier_model_groups:
+    Ultra: ultra-tier
+    Pro: pro-tier
+    Flash: flash-tier
+    Flash Lite: flash-lite-tier
