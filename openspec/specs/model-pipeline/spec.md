@@ -100,7 +100,7 @@ The pipeline SHALL compute a per-deployment cost-per-task that reflects both the
 - **THEN** the output SHALL record which prices are direct provider prices and which are fallbacks, so the human reviewer can identify estimates
 
 ### Requirement: Model ranking and tier assignment
-The pipeline SHALL rank deployments using Pareto frontier analysis at the canonical model level (frontier models as primary candidates, dominated models as backup), assign tier eligibility by SOTA-relative intelligence floors so a model qualifies for every tier at or below its capability, and select top-K deployments per tier using NMB (Net Monetary Benefit) with same-NMB grouping.
+The pipeline SHALL rank deployments using Pareto frontier analysis at the canonical model level (frontier models as primary candidates, dominated models as backup), assign tier eligibility by SOTA-relative intelligence floors so a model qualifies for every tier at or below its capability, and select top-K deployments per tier using NMB (Net Monetary Benefit) with same-NMB grouping. It SHALL support model exclusion at two scopes: global patterns that remove a model before ranking, and optional tier-scoped patterns that remove a model from one tier only.
 
 #### Scenario: Pareto frontier at canonical level (primary vs backup)
 - **WHEN** ranking models
@@ -123,41 +123,215 @@ The pipeline SHALL rank deployments using Pareto frontier analysis at the canoni
 - **THEN** each NMB group SHALL receive a consecutive order value (1, 2, 3, ...) where lower orders are tried first, same-NMB deployments share an order (load-balanced by LiteLLM's routing strategy), and the failover chain follows pure NMB ranking
 
 #### Scenario: Excluding models by configuration
-- **WHEN** a model matches a configured exclusion pattern (matched case-insensitively as a substring against the provider, provider model ID, display name, canonical slug, and canonical name)
-- **THEN** the pipeline SHALL drop it before ranking so it never appears in any tier, and SHALL list it in the report under an "excluded_by_config" reason
+- **WHEN** a model matches a configured global exclusion pattern, matched case-insensitively as a substring against the provider, provider model ID, display name, canonical slug, and canonical name
+- **THEN** the pipeline SHALL drop it before ranking so it never appears in any tier, and SHALL list it in the report under an `excluded_by_config` reason
+
+#### Scenario: Tier-scoped exclusion
+- **WHEN** a model matches an exclusion pattern configured for one named tier and does not match a global pattern
+- **THEN** the pipeline SHALL keep it scored (intelligence, cost-per-task, Pareto state) and eligible for every other tier it qualifies for, SHALL NOT include it in that tier's eligible pool, SHALL NOT populate it into that tier's model group, and SHALL list it as excluded by configuration for that tier in both the ranking report and the machine-readable output
+- **AND** tier-scoped patterns SHALL use the same case-insensitive substring matching against the same five model fields as global patterns
+
+#### Scenario: Tier-scoped exclusion matches the whole canonical model
+- **WHEN** a tier-scoped pattern matches a canonical model's slug or name
+- **THEN** every provider deployment of that canonical model SHALL be excluded from that tier, and a pattern that matches only one provider SHALL exclude only that provider's deployments from that tier
+
+#### Scenario: Global patterns take precedence over tier scope
+- **WHEN** a model matches both a global pattern and a tier-scoped pattern
+- **THEN** the global exclusion SHALL win, the model SHALL be absent from every tier, and it SHALL be reported once under the global `excluded_by_config` reason rather than per tier
+
+#### Scenario: Tier-scoped exclusion does not change SOTA or floors
+- **WHEN** a model is excluded from one or more tiers by tier-scoped patterns
+- **THEN** its intelligence SHALL still count toward the SOTA value used to derive tier floors, and no tier floor SHALL change solely because of a tier-scoped exclusion
+
+#### Scenario: Absent or empty tier-scoped configuration
+- **WHEN** no tier-scoped exclusion map is configured, or a tier's list is empty
+- **THEN** that tier's eligible pool SHALL be exactly the pool produced by floor eligibility and global exclusion, with no additional filtering
+
+#### Scenario: Unknown tier name is rejected
+- **WHEN** the exclusion configuration names a tier that is not present in the configured tier set
+- **THEN** configuration loading SHALL fail with an error that names the unknown tier and lists the valid tier names, and no scoring SHALL run
+
+### Requirement: Tier model pinning
+
+Notwithstanding NMB-based tier selection, the pipeline SHALL allow a named tier to force-include a configured ordered list of canonical models (pins) ahead of ranked models. Pins SHALL be matched by canonical slug, SHALL occupy the lowest order values in configuration order, and SHALL NOT alter the NMB ranking of non-pinned models.
+
+#### Scenario: Pinned models occupy the first orders
+- **WHEN** a tier configures pins `["model-a", "model-b"]` and both slugs resolve to scored models
+- **THEN** `model-a` SHALL receive order 1 and `model-b` order 2, and every NMB-selected model in that tier SHALL receive a higher order in its unchanged relative NMB order
+
+#### Scenario: Pin bypasses the intelligence floor
+- **WHEN** a pinned canonical model's intelligence is below the tier's configured floor
+- **THEN** the pipeline SHALL still include it in that tier, without changing the SOTA intelligence value or any tier floor
+
+#### Scenario: Pin bypasses NMB selection
+- **WHEN** a pinned model would not be selected by the tier's NMB top-K ranking
+- **THEN** the pipeline SHALL include it as a pinned deployment, distinct from primary and backup picks, and SHALL NOT let its pin displace a non-pinned model from its relative NMB position
+
+#### Scenario: Pins consume top-K slots
+- **WHEN** a tier resolves `P` pins and `top_k_per_tier` is `K`
+- **THEN** at most `max(0, K - P)` NMB-selected groups SHALL be included in that tier
+- **AND WHEN** `P >= K`, all resolved pins SHALL still be included, no NMB-selected groups SHALL be added, and a warning SHALL be reported
+
+#### Scenario: All provider deployments of a pinned canonical share its order
+- **WHEN** a pinned slug resolves to deployments on more than one provider
+- **THEN** every deployment of that canonical that is not excluded from the tier SHALL be included at the same pin order and load-balanced by the router
+
+#### Scenario: Global exclusion wins over a pin
+- **WHEN** a pinned slug matches a global exclusion pattern and therefore has no scored deployment
+- **THEN** the pin SHALL be ignored, a warning SHALL be reported, and the rest of the scoring run SHALL continue
+
+#### Scenario: Tier exclusion wins over a pin
+- **WHEN** a pin's deployments are all removed from the tier by that tier's exclusion patterns
+- **THEN** the pin SHALL be ignored for that tier, a warning SHALL be reported, and the model MAY still be pinned in other tiers
+
+#### Scenario: Unknown slug is warned and ignored
+- **WHEN** a configured pin slug matches no canonical model
+- **THEN** it SHALL be ignored with a warning and the remaining pins and scored selection SHALL be unaffected
+
+#### Scenario: Known model without a scored deployment is warned and ignored
+- **WHEN** a configured pin slug matches a canonical model that has no scored deployment (for example missing pricing or intelligence)
+- **THEN** it SHALL be ignored with a warning and the rest of the run SHALL continue
+
+#### Scenario: Duplicate pin uses the first occurrence
+- **WHEN** the same slug appears more than once in one tier's pin list
+- **THEN** the first occurrence SHALL determine its order, later occurrences SHALL be ignored, and a warning SHALL be reported
+
+#### Scenario: Scored ranking is unchanged by pins
+- **WHEN** pins are configured for a tier
+- **THEN** the tier's latency calibration SHALL use the same floor-eligible pool it would use without pins, and the NMB value, relative NMB order, primary/backup classification, and Pareto state of every non-pinned model SHALL be unchanged
+- **AND** pinned models SHALL be removed from NMB selection only, and the non-pinned models SHALL be renumbered consecutively after the pin block while preserving their relative order
+
+#### Scenario: Pins are visible in the artifacts
+- **WHEN** a tier has resolved pins
+- **THEN** each pinned deployment SHALL be marked as pinned in `tier-output.json`, the tier's resolved pin order SHALL be recorded there, and both readable outputs SHALL show a "Pinned by config" block listing the pinned models and their orders
+- **AND** the ranking report's model index SHALL show the tiers each model was pinned in
+
+#### Scenario: Pin warnings are reported
+- **WHEN** any pin cannot be honored, is duplicated, or the pin count reaches the top-K limit
+- **THEN** the warning SHALL be written to the score command's error output, included in the ranking report, and carried in the machine-readable artifact, and the run SHALL continue
+
+#### Scenario: Invalid pin configuration is rejected
+- **WHEN** `pins.tiers` names a tier that is not configured, or a tier's value is not a list of slugs
+- **THEN** configuration loading SHALL fail with an error naming the offending key and, for an unknown tier, the valid tier names
+
+#### Scenario: Absent or empty pin configuration
+- **WHEN** `pins.tiers` is absent, or a tier's pin list is empty
+- **THEN** that tier SHALL be selected and ordered exactly as it was before pinning existed
+
+### Requirement: Latency-aware NMB ranking
+
+The pipeline SHALL include a latency term in NMB ranking, weighted by a per-tier share of the
+tier's NMB spread, using each canonical model's published Artificial Analysis median
+end-to-end response time, and SHALL record the latency, the share, the derived weight, and
+the calibration inputs in its artifacts.
+
+#### Scenario: Latency is captured with canonical data
+
+- **WHEN** the score phase loads canonical models from the AA data
+- **THEN** each canonical model SHALL carry AA's `median_end_to_end_response_time_seconds`
+  when published, deployments SHALL inherit that value unchanged, and the value SHALL be
+  recorded in `tier-output.json` (null when AA publishes none)
+
+#### Scenario: Per-tier latency penalty
+
+- **WHEN** a tier's eligible deployments are ranked
+- **THEN** NMB SHALL be `lambda × intelligence − cost_per_task − mu × latency_seconds`, where
+  `mu = rho[tier] × spread ÷ median_latency`, `spread` is the difference between the highest
+  and lowest NMB of the tier's eligible groups measured without the latency term, and
+  `median_latency` is the median AA latency of the tier's eligible deployments that publish one
+
+#### Scenario: Missing latency is not invented
+
+- **WHEN** AA publishes no latency for a model
+- **THEN** its latency penalty SHALL be zero, the model SHALL remain eligible, and the
+  artifact and report SHALL show its latency as unknown
+
+#### Scenario: Latency, share, and derived weight are recorded
+
+- **WHEN** `tier-output.json` is written
+- **THEN** each deployment SHALL record its `latency_seconds`, each tier SHALL record the
+  configured `rho`, the derived `mu`, and the calibration inputs (`spread`,
+  `median_latency`), and the top-level `parameters` SHALL record the full per-tier
+  `latency_rho` mapping plus the derived `mu` mapping
 
 ### Requirement: Ranking explainability report
-The pipeline SHALL produce a human-readable report that explains the ranking for every scored model, so a user can see why a model did or did not land in a tier.
+
+The pipeline SHALL produce a human-readable report that explains the ranking for every
+scored model, so a user can see why a model did or did not land in a tier.
 
 #### Scenario: Per-tier full ranking with NMB breakdown
+
 - **WHEN** the score phase runs
-- **THEN** it SHALL write a report listing, for each tier, every eligible model ranked by that tier's NMB alongside the NMB inputs (lambda, intelligence, cost_per_task), the model's Pareto state, and whether it was selected (with its order) or cut
+- **THEN** it SHALL write a report listing, for each tier, every eligible model ranked by
+  that tier's NMB alongside the NMB inputs (lambda, intelligence, cost_per_task, latency
+  or "unknown", the tier's `rho` and derived `mu`, and the resulting latency penalty), the
+  model's Pareto state, and whether it was selected (with its order) or cut
 
 #### Scenario: Per-model index across tiers
+
 - **WHEN** the report is generated
-- **THEN** it SHALL include an index of every scored model showing its intelligence, cost-per-task, Pareto state, the tiers it was eligible for, and the tiers it was actually selected in
+- **THEN** it SHALL include an index of every scored model showing its intelligence,
+  cost-per-task, Pareto state, the tiers it was eligible for, and the tiers it was
+  actually selected in
 
 #### Scenario: Dominated models are explained
+
 - **WHEN** a model is off the Pareto frontier
-- **THEN** the report SHALL name a model that dominates it (smarter AND cheaper), so a user can see why the model was only ever a backup
+- **THEN** the report SHALL name a model that dominates it (smarter AND cheaper), so a
+  user can see why the model was only ever a backup
+
+### Requirement: Token limit resolution
+Before emitting deployments, the pipeline SHALL resolve each model's real output token limit from the public models.dev catalog, and SHALL derive the input limit from the provider-published context window and the resolved output limit. The pipeline SHALL NOT hardcode model identities in configuration and SHALL NOT invent a token limit when resolution fails.
+
+#### Scenario: Provider catalog entry resolves the output limit
+- **WHEN** the models.dev catalog contains an entry for the pipeline's provider and model ID
+- **THEN** that entry's published output limit SHALL be used as the model's output limit
+
+#### Scenario: Normalized model-id fallback
+- **WHEN** the catalog has no entry for the pipeline's provider and model ID that publishes an output limit
+- **THEN** the pipeline SHALL look for another catalog entry with the same model ID after normalization (case-insensitive, ignoring vendor prefixes, punctuation, and serving-plan suffixes) and use its output limit when it publishes one
+
+#### Scenario: Limits are provider-specific
+- **WHEN** the same model ID appears under several catalog providers with different output limits
+- **THEN** the entry for the pipeline's own provider SHALL win, and an entry from another provider SHALL be used only when the pipeline's provider has no entry that publishes an output limit
+
+#### Scenario: Input limit is derived from context and output
+- **WHEN** the provider publishes a context window and an output limit has been resolved
+- **THEN** the input limit SHALL be `context − output`, while the context window itself remains the provider-published value
+
+#### Scenario: Unresolved limits are never invented
+- **WHEN** neither catalog lookup yields an output limit for a model
+- **THEN** the pipeline SHALL leave the limit unset, flag the model as unresolved in its report, and continue with the remaining models
 
 ### Requirement: Self-contained JSON output
-The pipeline SHALL produce a self-contained JSON artifact (`tier-output.json`) containing all data needed for LiteLLM population, including per-deployment provider details, pricing, intelligence scores, NMB scores, order assignments, and target model group names.
+The pipeline SHALL produce a self-contained JSON artifact (`tier-output.json`) containing all data needed for LiteLLM population, including per-deployment provider details, pricing, intelligence scores, NMB scores, order assignments, target model group names, and resolved token limits.
 
 #### Scenario: Complete populate fields
 - **WHEN** the score phase writes `tier-output.json`
-- **THEN** each deployment record SHALL include: canonical model name, provider name, provider model ID, API base URL, API key environment variable reference, endpoint format, model group name (e.g., "pro-tier"), order number, input/output/cache prices with provenance, intelligence score, cost_per_task, NMB score, and tier assignment
+- **THEN** each deployment record SHALL include: canonical model name, provider name, provider model ID, API base URL, API key environment variable reference, endpoint format, model group name (e.g., "pro-tier"), order number, input/output/cache prices with provenance, intelligence score, cost_per_task, NMB score, tier assignment, context window, input limit, and output limit
 
 #### Scenario: Re-populatable artifact
 - **WHEN** the populate phase reads `tier-output.json`
 - **THEN** it SHALL have sufficient information to create, update, or delete LiteLLM model entries via the management API without any additional data from the fetch or score phases
 
+#### Scenario: Token limit provenance is recorded
+- **WHEN** a deployment record carries a resolved output limit
+- **THEN** the artifact SHALL record where the value came from (the pipeline's own provider catalog entry or a fallback match in another provider's entry) so a reviewer can audit it
+
 ### Requirement: Idempotent LiteLLM population
-The pipeline SHALL populate LiteLLM's database via its management API in an idempotent manner — re-running populate with the same input produces no duplicate entries and converges to the desired state.
+The pipeline SHALL populate LiteLLM's database via its management API in an idempotent manner — re-running populate with the same input produces no duplicate entries and converges to the desired state. Convergence SHALL cover both `litellm_params` and the pipeline-owned `model_info` fields (token limits, base model, model group), not only `litellm_params`.
 
 #### Scenario: Diff-based population
 - **WHEN** the populate phase runs
-- **THEN** it SHALL first query `GET /model/info` to retrieve the current state, diff the desired state from `tier-output.json` against the current state, and apply only the necessary changes (create new models, update changed models, delete removed models)
+- **THEN** it SHALL first query `GET /model/info` to retrieve the current state, diff the desired state from `tier-output.json` against the current state across `litellm_params` and pipeline-owned `model_info` fields, and apply only the necessary changes (create new models, update changed models, delete removed models)
+
+#### Scenario: Model info changes converge
+- **WHEN** an existing deployment's pipeline-owned `model_info` fields differ from the desired state (for example its resolved token limits changed, or the stored row predates this change and carries no output limit)
+- **THEN** populate SHALL detect the difference and apply it so the stored deployment converges to the desired state
+
+#### Scenario: Updates persist model info without clearing other fields
+- **WHEN** an update is applied to an existing deployment
+- **THEN** it SHALL go through a management endpoint that persists `model_info` changes (the PUT model-update endpoint ignores `model_info`), and the update SHALL NOT clear `model_info` fields the pipeline does not own
 
 #### Scenario: Per-provider deployment parameters
 - **WHEN** creating or updating a LiteLLM model entry
@@ -168,12 +342,28 @@ The pipeline SHALL populate LiteLLM's database via its management API in an idem
 - **THEN** pricing SHALL be set inline via `litellm_params` fields (`input_cost_per_token`, `output_cost_per_token`, etc.) or `model_info` fields, and the pipeline SHALL NOT require entries in `custom_cost_map.json` for these models
 
 ### Requirement: Configurable task profile and NMB parameters
-All task-profile token counts, NMB tuning parameters (tier lambdas, latency penalty mu, tier floors, top-K count), and pricing policies (cache hit rate, input:output ratio, peak/off-peak windows) SHALL be defined in a configuration file, not hardcoded in source code.
+
+All task-profile token counts, NMB tuning parameters (tier lambdas, per-tier latency share
+rho, tier floors, top-K count), and pricing policies (cache hit rate, input:output ratio,
+peak/off-peak windows) SHALL be defined in a configuration file, not hardcoded in source
+code.
 
 #### Scenario: Task profile from provider data
+
 - **WHEN** the fetch phase scrapes provider documentation for per-request token estimates
-- **THEN** it SHALL output suggested task-profile values to a separate file for the human to review and update in the config, rather than using them directly
+- **THEN** it SHALL output suggested task-profile values to a separate file for the human
+  to review and update in the config, rather than using them directly
 
 #### Scenario: NMB parameter documentation
+
 - **WHEN** the config file is read
-- **THEN** each parameter SHALL have an inline comment explaining what it is, how it works, its effect on ranking, when to change it, and how to change it
+- **THEN** each parameter SHALL have an inline comment explaining what it is, how it
+  works, its effect on ranking, when to change it, and how to change it
+
+#### Scenario: Per-tier latency share
+
+- **WHEN** the latency policy is configured
+- **THEN** it SHALL be a per-tier share `rho` keyed by the same tier names as the lambdas
+  and floors, a single numeric value SHALL be accepted as a default applied to every tier,
+  and a missing tier key SHALL fail with an error naming the tier and the configured keys
+  rather than silently ranking that tier without a penalty
