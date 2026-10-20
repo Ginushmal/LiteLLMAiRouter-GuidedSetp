@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from model_pipeline.config import Config
-from model_pipeline.http import HttpClient, ScrapeRecorder, ScrapeRecord
+from model_pipeline.http import HttpClient, ScrapeRecord, ScrapeRecorder
 from model_pipeline.models import CanonicalModel
 
 
@@ -65,6 +65,9 @@ class AaClient:
                 break
             page += 1
 
+        # `output/` is disposable (and git-ignored), so it may not exist yet on
+        # a fresh checkout. Create it here like every other artifact writer.
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
         return rows
 
