@@ -159,6 +159,17 @@ This project defines **two groups** from five deployments:
 | `flash-tier` | DeepSeek V4.1 Flash (order 1), Qwen 3.8 Omni Flash (order 1), DeepSeek V4 Flash (order 2) |
 | `pro-tier` | DeepSeek V4 Pro, Qwen 3.7 Plus |
 
+### The `general_settings` block
+
+```yaml
+general_settings:
+  store_model_in_db: true                     # Admin UI model management; DB-managed tier models
+  store_prompts_in_spend_logs: true           # keep request/response payloads in spend logs
+  forward_client_headers_to_llm_api: true     # forward client x-* headers upstream
+```
+
+The last line is what lets a client send OpenRouter's `x-session-id` header. OpenRouter uses that id as its **sticky-routing key**: it keeps a conversation on the same upstream provider, so the provider's prompt cache stays warm (verified: 1304-token prompt, 0 cached tokens on turn 1, 1280 on turn 2 through the gateway). The body field `session_id` works too, and OpenRouter prefers it over the header. LiteLLM strips `authorization`, `x-api-key` and `x-litellm-api-key` before forwarding, so enabling this does not leak client credentials — but it does forward *every* `x-*` header the client sends.
+
 ---
 
 ## Step 6 — Wire the provider key into Compose

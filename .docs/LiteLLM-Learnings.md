@@ -1082,6 +1082,12 @@ spec:
 
 **Solution:** set `model_info.max_output_tokens` (and `max_tokens`) per deployment, with `max_input_tokens = context − output`. Apply changes with `PATCH /model/{model_id}/update` (`POST /model/update` silently ignores `model_info`) and keep the stored id URL-safe — no `/`. See §6, “Token Limits & `model_info`”.
 
+### 21. Expecting `x-session-id` to reach OpenRouter
+
+**Problem:** OpenRouter keys its **provider sticky routing** (which keeps a conversation on one upstream provider so the provider's prompt cache stays warm) and its Logs → Sessions grouping on a session id, accepted as the body field `session_id` **or** the `x-session-id` header. Through the proxy the body field works (LiteLLM funnels any unknown body key into `extra_body` for the `openai` provider), but the **header is dropped**: LiteLLM forwards only `x-*` client headers when `general_settings.forward_client_headers_to_llm_api: true`, and without it the header never leaves the proxy. So a client that can only set a header silently loses its stickiness, and the symptom is a cold cache that looks like the provider's fault.
+
+**Solution:** set `general_settings.forward_client_headers_to_llm_api: true` (one line, `restart litellm` — the config is bind-mounted). Credentials are safe: LiteLLM runs client headers through `clean_headers` before forwarding, and `authorization`, `x-api-key` and `x-litellm-api-key` are stripped unless the separate `forward_llm_provider_auth_headers` setting is on. Note it forwards **every** `x-*` client header, not just the one you want. Two limits: the body field wins over the header on OpenRouter's side, and the Anthropic-format path (`/v1/messages`) is bridged to `/v1/responses` upstream, where `session_id` and `cache_control` are dropped and no client headers are forwarded at all.
+
 ---
 
 ## 13. Quick Reference
@@ -1180,6 +1186,8 @@ curl -s http://localhost:4000/spend/logs -H "Authorization: Bearer $MASTER_KEY"
 | Custom Pricing | https://docs.litellm.ai/docs/proxy/custom_pricing |
 | Custom Cost Map | https://docs.litellm.ai/docs/proxy/custom_model_cost_map |
 | Caching | https://docs.litellm.ai/docs/caching/gpt_cache |
+| Session Affinity (sticky deployments) | https://docs.litellm.ai/docs/routing#session-affinity-sticky-sessions |
+| OpenRouter Prompt Caching & `session_id` | https://openrouter.ai/docs/features/prompt-caching |
 | Guardrails | https://docs.litellm.ai/docs/proxy/guardrails |
 | Observability | https://docs.litellm.ai/docs/observability/callbacks |
 | Production Deployment | https://docs.litellm.ai/docs/proxy/deploy |

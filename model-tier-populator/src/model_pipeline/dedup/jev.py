@@ -1,9 +1,12 @@
 """Jev (TypeSafe System One) classifier client.
 
-Reached through the CommandCode Provider API's `v1/systemone` endpoint, so no
-separate TypeSafe key is needed. We send the provider model name as `state`
-and the shortlisted canonical names as a single-choice `criteria` question,
-including an "unmapped" option so Jev can reject names it does not recognise.
+The endpoint is config-driven. It is normally OpenRouter's Decisions API
+(``https://openrouter.ai/api/alpha/decisions``), which exposes Jev as a
+"decision" model and accepts the same shape as TypeSafe's own API: the
+provider model name as ``state`` and the shortlisted canonical names as a
+single-choice ``criteria`` question, including an "unmapped" option so Jev can
+reject names it does not recognise. The response carries
+``answers.<question>.choice/confidence/probabilities``.
 """
 
 from __future__ import annotations

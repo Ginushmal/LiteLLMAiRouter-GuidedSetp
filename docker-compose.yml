@@ -23,6 +23,7 @@ services:
       STORE_MODEL_IN_DB: "True"
       COMMANDCODE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:?set it in .env}
+      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:?set it in .env}
       # The complexity_router (smart-router) needs a Jev classifier. Jev is
       # reachable through CommandCode's Provider API, so point it there using
       # the CommandCode key. URL becomes {base}/v1/systemone.

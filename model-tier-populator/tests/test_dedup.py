@@ -2,12 +2,15 @@
 
 import csv
 from pathlib import Path
+from types import SimpleNamespace
 
+from model_pipeline.config import DedupConfig
+from model_pipeline.dedup.mapper import map_models
 from model_pipeline.dedup.mappings_csv import FIELDS, read_mappings, write_mappings
 from model_pipeline.dedup.normalize import CanonicalIndex, normalize_key
 from model_pipeline.dedup.prefilter import shortlist
 from model_pipeline.dedup.variant import parse_variant
-from model_pipeline.models import CanonicalModel, Mapping
+from model_pipeline.models import CanonicalModel, Mapping, RawModel
 
 EFFORT = ["high", "highspeed", "max", "xhigh", "medium", "low", "thinking", "reasoning"]
 
@@ -93,6 +96,44 @@ def test_exact_strips_next_version_suffix():
     models = [CanonicalModel(slug="qwen3-8-flash-next", name="Qwen3.8 Flash")]
     idx = CanonicalIndex(models, ["-latest", "-next"])
     assert idx.exact("Qwen/Qwen3.8-Flash").slug == "qwen3-8-flash-next"
+
+
+def test_exact_maps_free_plan_suffix_to_base():
+    models = [CanonicalModel(slug="minimax-m3-1-flash", name="MiniMax M3.1 Flash")]
+    idx = CanonicalIndex(models, [":free", ":batch"])
+    assert idx.exact("minimax/minimax-m3.1-flash:free").slug == "minimax-m3-1-flash"
+
+
+def test_mapper_records_a_free_plan_variant_as_an_exact_match():
+    models = [
+        RawModel(
+            provider="openrouter",
+            model_id="minimax/minimax-m3.1-flash:free",
+            display_name="MiniMax: MiniMax M3.1 Flash (free)",
+        )
+    ]
+    canonical = [CanonicalModel(slug="minimax-m3-1-flash", name="MiniMax M3.1 Flash")]
+
+    class _NoJev:
+        def choose(self, *args, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("an exact match must not call Jev")
+
+    cfg = SimpleNamespace(
+        dedup=DedupConfig(
+            strip_suffixes=[":free", ":batch"],
+            speed_suffixes=[],
+            effort_tokens=[],
+        ),
+        jev=SimpleNamespace(candidate_shortlist_size=5, review_confidence_threshold=0.7),
+    )
+    mappings = map_models(models, canonical, cfg, _NoJev())
+
+    assert len(mappings) == 1
+    assert mappings[0].method == "exact"
+    assert mappings[0].confidence == 1.0
+    assert mappings[0].canonical_slug == "minimax-m3-1-flash"
+    # The deployment keeps the full provider id (suffix included).
+    assert mappings[0].model_id == "minimax/minimax-m3.1-flash:free"
 
 
 # -- mappings CSV ---------------------------------------------------------

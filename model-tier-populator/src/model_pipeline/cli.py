@@ -15,8 +15,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from model_pipeline.config import Config, load_config
+from model_pipeline.config import Config, load_config, parse_as_of
 from model_pipeline.http import HttpClient, ScrapeRecorder
+
+_AS_OF_HELP = (
+    "evaluate time-of-day prices at this ISO 8601 timestamp (must carry a "
+    "timezone, e.g. 2026-10-22T18:00Z); overrides pricing.as_of for this run"
+)
 
 
 def _latest_html(cfg: Config, provider: str) -> str:
@@ -25,6 +30,15 @@ def _latest_html(cfg: Config, provider: str) -> str:
         return ""
     htmls = sorted(provider_dir.glob("*.html"), key=lambda p: p.stat().st_mtime)
     return htmls[-1].read_text(encoding="utf-8", errors="replace") if htmls else ""
+
+
+def _as_of_for_run(cfg: Config, args: argparse.Namespace):
+    """The run's schedule evaluation instant: ``--as-of`` wins over config.
+
+    ``populate`` takes no flag, so ``getattr`` keeps the helper usable there.
+    """
+    override = getattr(args, "as_of", None)
+    return parse_as_of(override) if override else cfg.pricing.as_of
 
 
 def _print_limit_warnings(flagged: dict[str, list[str]]) -> None:
@@ -68,6 +82,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     from model_pipeline.scoring.aa import AaClient
 
     cfg = load_config(args.config)
+    cfg.pricing.as_of = _as_of_for_run(cfg, args)
     http = HttpClient()
     recorder = ScrapeRecorder(cfg.raw_dir, cfg.logs_dir)
 
@@ -147,6 +162,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     from model_pipeline.scoring.pipeline import score
 
     cfg = load_config(args.config)
+    cfg.pricing.as_of = _as_of_for_run(cfg, args)
     http = HttpClient()
     recorder = ScrapeRecorder(cfg.raw_dir, cfg.logs_dir)
 
@@ -254,12 +270,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=None, help="path to config.yaml")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("fetch", help="fetch providers + dedup -> mappings.csv")
-    sub.add_parser("score", help="mappings + AA + config -> tier-output.json")
+    fetch = sub.add_parser("fetch", help="fetch providers + dedup -> mappings.csv")
+    fetch.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
+    score = sub.add_parser("score", help="mappings + AA + config -> tier-output.json")
+    score.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
     populate = sub.add_parser("populate", help="tier-output.json -> LiteLLM")
     populate.add_argument("--dry-run", action="store_true", help="show the diff without applying")
     run = sub.add_parser("run", help="fetch -> score -> populate in one go (no review gates)")
     run.add_argument("--dry-run", action="store_true", help="score for real, but preview the populate diff")
+    run.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
     return parser
 
 

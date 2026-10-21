@@ -127,10 +127,11 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [ ] 11.4 Built-ins needing a license (ENT): `llmguard_moderations`, `llamaguard_moderations`, `hide_secrets`, `openai_moderations`, `google_text_moderation`, `lakera_prompt_injection`, `aporia_prompt_injection`
 - [ ] 11.5 Guardrails per key/team + enforced required params (ENT)
 
-## Track 12 - Caching `[NOT STARTED]`
+## Track 12 - Caching `[IN PROGRESS]`
 
 - [ ] 12.1 Response caching (Redis / disk), `ttl`, `namespace` (tier?)
 - [ ] 12.2 Semantic caching (tier?)
+- [x] 12.3 Provider-side prompt caching & session continuity (OpenRouter `session_id` / `x-session-id`, LiteLLM session affinity) — 2026-10-22
 
 ## Track 13 - Prompt Management `[NOT STARTED]`
 

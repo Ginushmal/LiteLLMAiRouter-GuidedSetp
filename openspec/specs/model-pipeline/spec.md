@@ -7,7 +7,7 @@ Provides a reusable multi-phase pipeline that fetches LLM model catalogs from mu
 ## Requirements
 
 ### Requirement: Multi-provider model fetching
-The pipeline SHALL fetch available model lists and pricing data from configured LLM providers (CommandCode and OpenCode) using their respective API endpoints and pricing documentation pages. Each provider SHALL use a dedicated adapter implementing a common interface that returns normalized model records with identity, pricing, context window, and endpoint metadata.
+The pipeline SHALL fetch available model lists and pricing data from configured LLM providers (CommandCode, OpenCode, and OpenRouter) using their respective API endpoints, pricing documentation pages, or — where a provider publishes one — a single JSON catalog that carries both models and pricing. Each provider SHALL use a dedicated adapter implementing a common interface that returns normalized model records with identity, pricing, context window, and endpoint metadata.
 
 #### Scenario: Fetch CommandCode models
 - **WHEN** the pipeline runs the fetch phase with the CommandCode adapter configured
@@ -17,13 +17,47 @@ The pipeline SHALL fetch available model lists and pricing data from configured 
 - **WHEN** the pipeline runs the fetch phase with the OpenCode adapter configured
 - **THEN** it retrieves the model list from `opencode.ai/inference/go/v1/models` and pricing from the Go plan documentation page, returning normalized records with model ID, input/output/cache prices, context window, and endpoint type (Chat Completions, Responses, Messages, or Google)
 
+#### Scenario: Fetch OpenRouter models
+- **WHEN** the pipeline runs the fetch phase with the OpenRouter adapter configured
+- **THEN** it SHALL retrieve both the model list and the pricing from the single JSON catalog at `openrouter.ai/api/v1/models`, with no separate pricing page, returning normalized records with model ID, the published per-token input/output/cache-read/cache-write prices, context window, and supported endpoints
+
+#### Scenario: OpenRouter model eligibility
+- **WHEN** the OpenRouter catalog contains `:batch` variants
+- **THEN** the adapter SHALL exclude them before normalization, because they serve the OpenRouter Batch API and are not chat-servable deployments
+- **WHEN** the catalog contains `:free` variants
+- **THEN** the pipeline SHALL include them as deployments carrying their published zero prices and SHALL map them to the same canonical identity as their base model; when that canonical has no Artificial Analysis identity the model SHALL be dropped as unmapped, and its intelligence score SHALL NOT be invented
+- **WHEN** the catalog contains router entries (`openrouter/free`, `openrouter/auto`, `openrouter/auto-beta`, `openrouter/fusion`, `openrouter/pareto-code`, `openrouter/bodybuilder`, `typesafe/jev-router`)
+- **THEN** they SHALL be excluded by configuration, since they are load-balancing or task-routing entries rather than real models
+
 #### Scenario: Pricing normalization
 - **WHEN** a provider publishes context-tiered pricing (different prices at different context lengths)
 - **THEN** the pipeline SHALL compute the average of the tier prices for cost calculation
 - **WHEN** a provider publishes peak and off-peak pricing windows
-- **THEN** the pipeline SHALL compute a weighted average based on the proportion of the configured active window that overlaps each pricing band
+- **THEN** the pipeline SHALL collapse them according to the configured time-of-day price mode, weighting by the proportion of the evaluation window that overlaps each of the model's own pricing bands
+- **WHEN** a provider publishes both context-threshold and time-of-day prices for one model
+- **THEN** the pipeline SHALL resolve the time dimension within each context tier first and then collapse the context tiers per the configured context-tier policy
 - **WHEN** a provider publishes discounted or promotional prices alongside list prices
 - **THEN** the pipeline SHALL use the effective (discounted) price
+
+#### Scenario: Time-of-day price modes
+- **WHEN** a model publishes time-of-day pricing and the configured mode is `today`
+- **THEN** the pipeline SHALL compute the weighted price over today's slice of the configured active window using the model's own bands and day-of-week schedule — the mode is date-scoped, so the configured active days do not gate it, and a weekday-only schedule therefore resolves to plain off-peak on a weekend run — and SHALL record the evaluated date in the artifact
+- **WHEN** the configured mode is `average`
+- **THEN** the pipeline SHALL compute the weighted price over the whole configured week (the active window across the configured active days)
+- **WHEN** the configured mode is `instant`
+- **THEN** the pipeline SHALL record the single price that applies at the evaluation instant with no averaging
+- **WHEN** a model publishes no time-of-day windows
+- **THEN** every mode SHALL yield its flat published price
+
+#### Scenario: Schedule evaluation instant
+- **WHEN** an `as_of` timestamp is configured or supplied for a run
+- **THEN** the `today` and `instant` modes SHALL evaluate schedules at that timestamp instead of the run time, and the artifact SHALL record the evaluation instant so a recorded price is never mistaken for a stable rate
+
+#### Scenario: Per-model schedule windows
+- **WHEN** a model's published overrides define their own time windows or day-of-week schedule
+- **THEN** the pipeline SHALL use those windows rather than the globally configured peak windows
+- **WHEN** a model's schedule leaves some hours uncovered
+- **THEN** its base published price SHALL apply outside every published window
 
 #### Scenario: Structured scraping logs
 - **WHEN** the pipeline fetches data from a provider
@@ -55,6 +89,8 @@ The pipeline SHALL map each provider model name to a canonical model identity fr
 - **WHEN** a provider model name differs from a canonical only by a trailing serving token (`-fast`, `-highspeed`, `-ultraspeed`, `-turbo`), or the canonical carries a version suffix (`-next`, `-latest`) the provider name lacks
 - **THEN** the pipeline SHALL resolve it deterministically: strip a trailing serving token from the provider name and retry the exact match, and treat `-next`/`-latest` as version suffixes stripped from both sides
 - **THEN** a canonical that lists the full name as a distinct entry (e.g. `grok-4-fast`) SHALL still win the full-name exact match first, so distinct fast/serving models are never merged into the base
+- **WHEN** a provider model name carries a trailing serving-plan suffix after a colon (`:free`, `:batch`)
+- **THEN** the pipeline SHALL strip the suffix before matching so the plan variant resolves to the same canonical identity as its base model, while the deployment record keeps the full provider model ID
 
 #### Scenario: Mappings checkpoint CSV
 - **WHEN** the fetch phase completes deduplication
@@ -345,8 +381,8 @@ The pipeline SHALL populate LiteLLM's database via its management API in an idem
 
 All task-profile token counts, NMB tuning parameters (tier lambdas, per-tier latency share
 rho, tier floors, top-K count), and pricing policies (cache hit rate, input:output ratio,
-peak/off-peak windows) SHALL be defined in a configuration file, not hardcoded in source
-code.
+peak/off-peak windows, time-of-day price mode, schedule evaluation instant) SHALL be
+defined in a configuration file, not hardcoded in source code.
 
 #### Scenario: Task profile from provider data
 
@@ -367,3 +403,11 @@ code.
   and floors, a single numeric value SHALL be accepted as a default applied to every tier,
   and a missing tier key SHALL fail with an error naming the tier and the configured keys
   rather than silently ranking that tier without a penalty
+
+#### Scenario: Time-of-day pricing policy
+
+- **WHEN** the config file is read
+- **THEN** the time-of-day price mode SHALL come from configuration (`today` | `average` |
+  `instant`) and the optional schedule evaluation instant SHALL be settable in
+  configuration or per run, and both SHALL carry the inline comments required of every
+  parameter

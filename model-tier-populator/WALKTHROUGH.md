@@ -133,8 +133,8 @@ model to a canonical identity in two steps:
                     v
  +--------------------------------------+
  | 2. JEV classifier                    |   TypeSafe "System One" model,
- |    state   = provider model name     |   reached via CommandCode
- |    criteria= shortlist of AA names   |   /provider/v1/systemone
+ |    state   = provider model name     |   reached through OpenRouter's
+ |    criteria= shortlist of AA names   |   Decisions API (/api/alpha/decisions)
  |    -> choice + confidence + probs    |   returns a calibrated choice
  +------------------+-------------------+
                     v

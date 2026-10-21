@@ -151,5 +151,19 @@ general_settings:
   store_model_in_db: true
   # Persist request and response payloads in spend logs
   store_prompts_in_spend_logs: true
+  # Forward client `x-*` headers to the upstream provider.
+  # Why: OpenRouter uses the `x-session-id` header as its sticky-routing key
+  # (the same value the body field `session_id` carries). It keeps a
+  # conversation on one upstream provider so the provider's prompt cache stays
+  # warm, and it groups the turns in OpenRouter's Logs -> Sessions view.
+  # Without this, the header is dropped at the proxy and only the body field
+  # works. The body field already works, so this header path is a convenience
+  # for clients that can only set headers.
+  # Safety: LiteLLM cleans the client headers before forwarding
+  # (clean_headers in litellm/proxy/litellm_pre_call_utils.py). Credential
+  # headers are NOT forwarded: `authorization`, `x-api-key` and
+  # `x-litellm-api-key` are stripped unless the separate
+  # `forward_llm_provider_auth_headers` setting is enabled (it is not).
+  forward_client_headers_to_llm_api: true
 
 environment_variables:

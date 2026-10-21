@@ -7,10 +7,12 @@ from model_pipeline.http import HttpClient, ScrapeRecorder
 from model_pipeline.providers.base import ProviderAdapter
 from model_pipeline.providers.commandcode import CommandCodeAdapter
 from model_pipeline.providers.opencode import OpenCodeAdapter
+from model_pipeline.providers.openrouter import OpenRouterAdapter
 
 _REGISTRY: dict[str, type[ProviderAdapter]] = {
     "commandcode": CommandCodeAdapter,
     "opencode": OpenCodeAdapter,
+    "openrouter": OpenRouterAdapter,
 }
 
 

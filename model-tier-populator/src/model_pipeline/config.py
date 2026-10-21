@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from model_pipeline.pricing import TIME_PRICE_MODES
 
 # model-pipeline/ is two levels above this file (src/model_pipeline/config.py).
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -92,6 +95,11 @@ class PricingPolicy:
     active_window_utc: tuple[str, str]
     active_days: list[int]
     peak_windows_utc: list[tuple[str, str]]
+    # How time-of-day prices are collapsed: "today" (date-scoped), "average"
+    # (whole configured week) or "instant" (the evaluation moment).
+    time_price_mode: str = "today"
+    # Evaluation instant for today/instant (None = the run time). Always UTC.
+    as_of: datetime | None = None
 
 
 @dataclass
@@ -186,6 +194,36 @@ class Config:
         return (PROJECT_ROOT / relative).resolve()
 
 
+def parse_as_of(value: str | datetime | None) -> datetime | None:
+    """Parse an ``as_of`` timestamp into an aware UTC datetime.
+
+    The value must carry a timezone (``Z`` or ``+HH:MM``): a naive timestamp
+    would silently mean the host's local time, and the schedules are UTC.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.lower().endswith("z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(
+                f"pricing.as_of must be an ISO 8601 timestamp, got {value!r}"
+            ) from exc
+    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
+        raise ValueError(
+            f"pricing.as_of must include a timezone (e.g. 2026-10-22T18:00Z), "
+            f"got {value!r}"
+        )
+    return parsed.astimezone(timezone.utc)
+
+
 def _pattern_list(value: Any, key: str) -> list[str]:
     """Normalise one exclusion pattern list.
 
@@ -262,6 +300,19 @@ def _validate_tier_names(
 
 def load_config(config_path: Path | str | None = None) -> Config:
     config_path = Path(config_path) if config_path else PROJECT_ROOT / "config.yaml"
+    if not config_path.exists():
+        # config.yaml is gitignored (personal tuning), so a fresh checkout has
+        # only the template. Say how to bootstrap instead of failing with a raw
+        # FileNotFoundError from read_text.
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}\n"
+            "config.yaml is gitignored (personal tuning). To get started, copy "
+            "the tracked template and edit it:\n"
+            "    cp config.example.yaml config.yaml       (sh)\n"
+            "    copy config.example.yaml config.yaml     (PowerShell)\n"
+            f"Template: {PROJECT_ROOT / 'config.example.yaml'}  "
+            "(or pass --config <path> to use another file)"
+        )
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
     repo_root = find_repo_root(PROJECT_ROOT)
@@ -287,6 +338,13 @@ def load_config(config_path: Path | str | None = None) -> Config:
 
     paths = data.get("paths", {})
     win = data["pricing"]["active_window_utc"]
+    time_price_mode = str(data["pricing"].get("time_price_mode", "today")).strip().lower()
+    if time_price_mode not in TIME_PRICE_MODES:
+        raise ValueError(
+            "pricing.time_price_mode must be one of "
+            f"{', '.join(TIME_PRICE_MODES)}; got {time_price_mode!r}"
+        )
+    as_of = parse_as_of(data["pricing"].get("as_of"))
 
     nmb = NmbConfig(
         tier_lambdas=data["nmb"]["tier_lambdas"],
@@ -330,6 +388,8 @@ def load_config(config_path: Path | str | None = None) -> Config:
             active_window_utc=(win["start"], win["end"]),
             active_days=data["pricing"]["active_days"],
             peak_windows_utc=[tuple(w) for w in data["pricing"]["peak_windows_utc"]],
+            time_price_mode=time_price_mode,
+            as_of=as_of,
         ),
         aa=AaConfig(**data["aa"]),
         jev=JevConfig(**data["jev"]),

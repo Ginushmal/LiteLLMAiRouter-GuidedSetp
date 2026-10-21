@@ -152,6 +152,32 @@ def test_apply_limits_without_catalog_flags_everything_unresolved():
     assert flagged["ours:gpt-6-luna"] == [FLAG_UNRESOLVED]
 
 
+def test_free_plan_suffix_resolves_to_base_model_limits():
+    # OpenRouter publishes `:free` variants of the same model under a suffixed
+    # id; models.dev has the base id, so the normalized fallback must find it.
+    catalog = {
+        "openrouter": {
+            "models": {
+                "acme/alpha-1": {"limit": {"context": 200000, "output": 64000}},
+            }
+        }
+    }
+    resolver = LimitResolver(catalog, STRIP, SPEED)
+    limits = resolver.resolve(["openrouter"], "acme/alpha-1:free")
+    assert limits.output == 64000
+    assert limits.source == "models.dev:openrouter"
+
+    model = RawModel(
+        provider="openrouter",
+        model_id="acme/alpha-1:free",
+        display_name="Acme: Alpha 1 (free)",
+        context_tokens=200000,
+    )
+    apply_limits([model], resolver, {"openrouter": ["openrouter"]})
+    assert model.output_tokens == 64000
+    assert model.input_tokens == 136000
+
+
 # -- artifacts ------------------------------------------------------------
 def test_limits_round_trip_through_the_snapshot():
     from model_pipeline.emit.snapshot import models_from_json, models_to_json

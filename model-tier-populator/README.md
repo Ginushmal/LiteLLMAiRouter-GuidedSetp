@@ -13,7 +13,7 @@ management API — no config edits, no restarts.
   ─────────            ─────────────        ────────────        ────────
   CommandCode  ──┐                          Pareto (advisory)   LiteLLM
   OpenCode     ──┼──▶ Artificial Analysis ──▶ SOTA tiers   ──▶  /model/new
-  (more later)   │    (intelligence+price)   NMB top-K          (idempotent)
+  OpenRouter   ──┘    (intelligence+price)   NMB top-K          (idempotent)
                  └──▶ Jev classifier                     
                       (name matching)
 ```
@@ -57,8 +57,9 @@ Each phase reads/writes files, so any phase can be re-run on its own:
 
   | Key | Used for |
   |-----|----------|
-  | `COMMANDCODE_API_KEY` | CommandCode models + the Jev classifier |
+  | `COMMANDCODE_API_KEY` | CommandCode models |
   | `OPENCODE_API_KEY` | OpenCode models |
+  | `OPEN_ROUTER_API_KEY` | OpenRouter models + the Jev classifier (OpenRouter Decisions) |
   | `ARTIFICIAL_ANALYSIS_API_KEY` | canonical identity + intelligence scores |
   | `LITELLM_MASTER_KEY` | LiteLLM management API |
 
@@ -95,10 +96,15 @@ uv run model-pipeline populate            # 3b. apply to LiteLLM
 
 ## Configuration
 
-Everything is in [`config.yaml`](config.yaml) — task profile, NMB tuning
+Everything lives in `config.yaml` - task profile, NMB tuning
 (tier lambdas/floors, top-K), pricing policy, providers, exclusions, pins, and the
 tier→model-group mapping. Each setting has an inline comment explaining what it
 is and when to change it. Nothing is hardcoded in the source.
+
+`config.yaml` is gitignored: it is personal tuning that differs per person. The
+tracked template is [`config.example.yaml`](config.example.yaml) - copy it to
+`config.yaml` to get started. Every key, its shape, and its possible values are
+documented inline there; keep the template in sync when you add a key.
 
 `exclude` has two scopes: `patterns` drops a model from every tier before
 ranking, while `tiers` drops it from one named tier only and leaves it available
@@ -109,15 +115,31 @@ force-included at the top of a tier, ahead of NMB selection. Pins bypass the
 tier's intelligence floor, consume top-K slots, and never override an exclusion.
 Unknown, duplicate, or excluded slugs produce warnings and are skipped.
 
+`pricing.time_price_mode` chooses how time-of-day prices are collapsed:
+`today` (weighted over today's slice of the active window — a weekday-only
+schedule comes out as plain off-peak on a weekend run), `average` (the whole
+configured week), or `instant` (the exact price at the evaluation moment).
+`pricing.as_of` — or `--as-of` on `fetch`/`score`/`run` — evaluates schedules at
+another timestamp (timestamps must carry a timezone). Providers that publish
+per-model hours (OpenRouter's `pricing.overrides`) always use their own windows,
+never `peak_windows_utc`; context-threshold prices still collapse via
+`context_tier_policy`.
+
 ## Provider support
 
 | Provider | chat | messages | responses | google |
 |----------|:----:|:--------:|:---------:|:------:|
 | CommandCode | yes | yes | — | — |
 | OpenCode | yes | yes | deferred | deferred |
+| OpenRouter | yes | — | — | — |
 
 "Deferred" protocols (OpenCode `responses`/`google`) need extra LiteLLM wiring,
 so those models are excluded from tiers for now.
+
+OpenRouter needs no scraping: its public models endpoint carries models **and**
+prices. `:batch` variants are dropped inside the adapter (Batch API, not chat),
+`:free` variants are kept as $0 deployments of their base model, and the
+`openrouter/free` router entry is excluded through `exclude.patterns`.
 
 ## Docs
 

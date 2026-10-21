@@ -9,8 +9,8 @@ Pricing rows encode tiers in the model name:
   * context tiers:  "Qwen3.7 Plus (\u2264 256K tokens)" + "(\u003e 256K tokens)"
   * peak/off-peak:  "DeepSeek V4.1 Flash (Off-Peak)" + "(Peak)"
 
-Both are collapsed into one effective price (context = policy average,
-peak = weighted by the configured active window).
+Both are collapsed into one effective price (context = configured policy,
+peak = the configured time price mode: today / average / instant).
 
 OpenCode also requires an ``x-opencode-session`` header on every request; the
 adapter injects a static one via ``extra_headers`` at deployment time.
@@ -106,6 +106,8 @@ class OpenCodeAdapter(ProviderAdapter):
             active_window=self.cfg.pricing.active_window_utc,
             active_days=self.cfg.pricing.active_days,
             peak_windows=self.cfg.pricing.peak_windows_utc,
+            time_price_mode=self.cfg.pricing.time_price_mode,
+            as_of=self.cfg.pricing.as_of,
         )
         self._record(
             self.pcfg.pricing_url + "#pricing",
@@ -152,6 +154,8 @@ def parse_opencode_pricing(
     active_window: tuple[str, str],
     active_days: list[int],
     peak_windows: list[tuple[str, str]],
+    time_price_mode: str = "average",
+    as_of=None,
 ) -> dict[str, ResolvedPricing]:
     table = None
     for t in _TABLE_RE.findall(html or ""):
@@ -175,6 +179,20 @@ def parse_opencode_pricing(
         )
         groups[normkey(base)].append((tag, price))
 
+    def collapse(peak_value, off_value):
+        """Peak/off-peak at the configured evaluation mode (None stays None)."""
+        if peak_value is None or off_value is None:
+            return off_value
+        return weighted_price(
+            peak_value,
+            off_value,
+            peak_windows,
+            active_window,
+            active_days,
+            mode=time_price_mode,
+            as_of=as_of,
+        )
+
     result: dict[str, ResolvedPricing] = {}
     for key, items in groups.items():
         tags = [t.lower() for t in (tag for tag, _ in items)]
@@ -189,12 +207,12 @@ def parse_opencode_pricing(
                 p for t, p in items if "peak" in t.lower() and "off" not in t.lower()
             )
             pr = ResolvedPricing(
-                input=weighted_price(peak.input, off.input, peak_windows, active_window, active_days) if peak.input is not None and off.input is not None else off.input,
-                output=weighted_price(peak.output, off.output, peak_windows, active_window, active_days) if peak.output is not None and off.output is not None else off.output,
-                cache_read=weighted_price(peak.cache_read, off.cache_read, peak_windows, active_window, active_days) if peak.cache_read is not None and off.cache_read is not None else off.cache_read,
+                input=collapse(peak.input, off.input),
+                output=collapse(peak.output, off.output),
+                cache_read=collapse(peak.cache_read, off.cache_read),
                 cache_write=off.cache_write,
             )
-            pr.normalization.append("peak/off-peak weighted by active window")
+            pr.normalization.append(f"peak/off-peak collapsed (time={time_price_mode})")
         elif is_context:
             pr = ResolvedPricing(
                 input=normalize_context_tiers([p.input for _, p in items], context_policy),
