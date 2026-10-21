@@ -82,6 +82,34 @@ uv run model-pipeline populate --dry-run  # 3a. preview the diff
 uv run model-pipeline populate            # 3b. apply to LiteLLM
 ```
 
+## TLS note — endpoint uses a self-signed cert (temporary)
+
+The LiteLLM endpoint in `config.yaml` (`litellm.base_url`) is fronted by an nginx
+whose certificate is self-signed. The pipeline always verifies TLS and has no
+off switch; instead, Python trusts an explicit certificate bundle via the
+`SSL_CERT_FILE` environment variable. Note that variable **replaces** the CA
+bundle (it does not add to it), so the bundle must also contain the normal
+public roots — otherwise the provider fetches fail too.
+
+- `certs/elevate-ironone-com.pem` — a copy of the server's certificate
+  (`scp iot-launchpad-server:/etc/nginx/ssl/elevate.crt`).
+- `certs/ca-bundle.pem` — that certificate **plus** the public roots from
+  certifi. This is the file to use.
+
+In PowerShell, set it in the session **before** any command that talks to the
+network (`fetch`, `run`, `populate`):
+
+```powershell
+$env:SSL_CERT_FILE = "$PWD\certs\ca-bundle.pem"
+```
+
+- If the server's cert is regenerated, re-copy it, then rebuild the bundle:
+  `Get-Content .venv\Lib\site-packages\certifi\cacert.pem, certs\elevate-ironone-com.pem | Set-Content certs\ca-bundle.pem -Encoding ascii`
+  (also rebuild after a `uv sync` that updates certifi).
+- Once the endpoint has a proper CA-signed cert: stop setting `SSL_CERT_FILE`
+  and delete `certs/`.
+
+
 ## Outputs (`output/`)
 
 | File | What it is |

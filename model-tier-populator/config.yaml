@@ -269,8 +269,8 @@ exclude:
     #   - "some-flagship-model"
     # Pro:
     #   - "opencode"            # keep one provider out of Pro only
-    Flash:
-      - "deepseek-v4.1-flash-fast"
+    # Flash:
+    #   - "deepseek-v4.1-flash-fast"
     # Flash Lite: ["mimo"]
 
 
@@ -310,7 +310,7 @@ pins:
     #   - "gpt-5"             # order 2
     # Pro:
     #   - "claude-sonnet-4-5"
-    Flash: [deepseek-v4-1-flash]
+    # Flash: [deepseek-v4-1-flash]
     # Flash Lite: []
 
 
@@ -366,7 +366,7 @@ providers:
 # LITELLM POPULATION
 # -----------------------------------------------------------------------------
 litellm:
-  base_url: http://localhost:4000
+  base_url: https://elevate.ironone.com/
   master_key_env: LITELLM_MASTER_KEY
   # Maps each pipeline tier to the LiteLLM model-group name that the existing
   # complexity_router (Jev) routes to. Keep these names in sync with the

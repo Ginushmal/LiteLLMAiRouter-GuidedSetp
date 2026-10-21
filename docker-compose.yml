@@ -21,6 +21,10 @@ services:
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set it in .env - see the header of this file}
       DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm
       STORE_MODEL_IN_DB: "True"
+      # # Disable the built-in API docs endpoints (see LiteLLM proxy utils.py)
+      # NO_DOCS: "true"
+      # NO_REDOC: "true"
+      # NO_OPENAPI: "true"
       COMMANDCODE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:?set it in .env}
       # The complexity_router (smart-router) needs a Jev classifier. Jev is
