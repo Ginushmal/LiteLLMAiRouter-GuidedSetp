@@ -43,6 +43,15 @@ output/
 .env.*
 !.env.example
 
+# ─── Local configuration ─────────────────────────────────────────────────────
+# config.yaml is a personal tuning file (tier lambdas/floors, active hours,
+# exclusions, pins, provider on/off) — it changes often and differs per person,
+# so it is NOT tracked. The tracked template is config.example.yaml: copy it to
+# config.yaml to get started. When you add a key to config.yaml, document it in
+# the template too so it never falls behind the loader.
+# (The repo-root config.yaml — the LiteLLM router config — stays tracked.)
+/config.yaml
+
 # ─── Editor / OS noise ───────────────────────────────────────────────────────
 .idea/
 .DS_Store

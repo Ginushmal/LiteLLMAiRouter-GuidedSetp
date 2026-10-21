@@ -377,7 +377,10 @@ id changes, the diff applies it as an add/delete pair, adds first.
 
 ## 9. Config reference (quick)
 
-All in [`config.yaml`](config.yaml). The ones you will actually tune:
+All in `config.yaml` (gitignored — personal tuning; the tracked template is
+[`config.example.yaml`](config.example.yaml), which documents every key, its
+shape, and its possible values — copy it to `config.yaml` to get started).
+The ones you will actually tune:
 
 | Setting | Meaning |
 |---------|---------|
