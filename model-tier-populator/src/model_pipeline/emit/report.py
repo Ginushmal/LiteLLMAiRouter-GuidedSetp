@@ -99,7 +99,9 @@ def _canon_index(result: ScoreResult) -> dict[str, dict]:
     return index
 
 
-def build_report(result: ScoreResult, cfg: Config) -> str:
+def build_report(
+    result: ScoreResult, cfg: Config, low_conf: list | None = None
+) -> str:
     top_k = result.parameters["top_k_per_tier"]
     index = _canon_index(result)
     lines: list[str] = []
@@ -111,6 +113,11 @@ def build_report(result: ScoreResult, cfg: Config) -> str:
         "**NMB** = lambda * intelligence - cost_per_task - mu * latency   "
         "(mu = rho × tier NMB spread ÷ median latency — see the tier table)\n"
     )
+    if low_conf:
+        lines.append(
+            f"_Warning: {len(low_conf)} low-confidence mapping(s) need review "
+            "in output/mappings.csv — the ranking below may misclassify them._\n"
+        )
     lines.append("A model is eligible for **every** tier whose floor it meets:\n")
     lines.append("| Tier | Model group | Floor (x SOTA) | lambda | rho | mu | top-K |")
     lines.append("|------|-------------|----------------|--------|-----|----|-------|")
@@ -255,6 +262,8 @@ def build_report(result: ScoreResult, cfg: Config) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_report(path: Path, result: ScoreResult, cfg: Config) -> None:
+def write_report(
+    path: Path, result: ScoreResult, cfg: Config, low_conf: list | None = None
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_report(result, cfg), encoding="utf-8")
+    path.write_text(build_report(result, cfg, low_conf), encoding="utf-8")

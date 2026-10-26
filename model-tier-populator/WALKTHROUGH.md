@@ -80,6 +80,10 @@ one without the others.
         +--> NMB rank + top-K + backfill
         |
         +--> output/tier-output.json  (+ .md)
+        +--> output/tier-ranking.md   (full ranking story: index, cut lines, dominators)
+        +--> output/tier-report.html  (same story as one offline page, with an
+                                        interactive Pareto chart and highlighted
+                                        per-tier top picks)
 
    PAUSE for a human to review the tier list.
 
@@ -87,6 +91,11 @@ one without the others.
  ────────────────────────────────────────────────────────────────────────────
    tier-output.json  -->  diff vs GET /model/info  -->  add / update / delete
                                                      (idempotent)
+
+  COMBINED: run = fetch -> score -> populate · refresh = fetch -> score
+    refresh never contacts LiteLLM, so it needs no LiteLLM server or master
+    key — it is the one-click path behind refresh-and-open.bat, which runs it
+    and opens tier-report.html in the default browser (only on success).
 ```
 
 Why split? So a DB wipe can be fixed by re-running only `populate`, and tuning a

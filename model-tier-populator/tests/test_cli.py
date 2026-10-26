@@ -57,6 +57,6 @@ def test_absent_as_of_flag_keeps_the_configured_instant():
 
 
 def test_fetch_score_and_run_accept_as_of():
-    for command in ("fetch", "score", "run"):
+    for command in ("fetch", "score", "refresh", "run"):
         args = build_parser().parse_args([command, "--as-of", "2026-10-22T18:00Z"])
         assert args.as_of == "2026-10-22T18:00Z"

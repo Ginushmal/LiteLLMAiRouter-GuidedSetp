@@ -152,7 +152,8 @@ def _tier_summary(tier) -> str:
 # score
 # --------------------------------------------------------------------------- #
 def cmd_score(args: argparse.Namespace) -> int:
-    from model_pipeline.dedup.mappings_csv import read_mappings
+    from model_pipeline.dedup.mappings_csv import low_confidence_rows, read_mappings
+    from model_pipeline.emit.html_report import write_html
     from model_pipeline.emit.output import build_payload, write_json, write_markdown
     from model_pipeline.emit.report import write_report
     from model_pipeline.emit.snapshot import read_snapshot
@@ -193,17 +194,42 @@ def cmd_score(args: argparse.Namespace) -> int:
 
     result = score(mappings, models_index, canonical, adapters, cfg)
     payload = build_payload(result, cfg)
+    low = low_confidence_rows(mappings)
     write_json(cfg.output_dir / "tier-output.json", payload)
     write_markdown(cfg.output_dir / "tier-output.md", payload)
-    write_report(cfg.output_dir / "tier-ranking.md", result, cfg)
+    write_report(cfg.output_dir / "tier-ranking.md", result, cfg, low)
+    write_html(cfg.output_dir / "tier-report.html", result, low)
 
     print(f"score complete: SOTA intelligence = {result.sota_intelligence}")
     _print_pin_warnings(result.pin_warnings)
     for tier in result.tiers:
         print(f"  {_tier_summary(tier)}")
     print(f"  cost methods: {result.cost_methods}")
-    print("  wrote output/tier-output.json, output/tier-output.md, output/tier-ranking.md")
+    print("  wrote output/tier-output.json, output/tier-output.md, output/tier-ranking.md, output/tier-report.html")
     print("\nReview output/tier-output.json, then run: populate")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# refresh (fetch + score, never populate)
+# --------------------------------------------------------------------------- #
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Run fetch -> score in one go, never touching LiteLLM.
+
+    The one-click path for "what are the best models today": it refreshes the
+    provider data, re-scores, and writes the readable reports. ``populate``
+    is deliberately out of scope — use it explicitly when LiteLLM should change.
+    """
+    for step, handler in (
+        ("fetch", cmd_fetch),
+        ("score", cmd_score),
+    ):
+        print(f"\n===== {step} =====")
+        rc = handler(args)
+        if rc != 0:
+            print(f"refresh stopped: '{step}' exited with code {rc}", file=sys.stderr)
+            return rc
+    print("\nrefresh complete: fetch -> score (reports written, LiteLLM untouched)")
     return 0
 
 
@@ -274,6 +300,10 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
     score = sub.add_parser("score", help="mappings + AA + config -> tier-output.json")
     score.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
+    refresh = sub.add_parser(
+        "refresh", help="fetch -> score in one go (never populate) -> tier-report.html"
+    )
+    refresh.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
     populate = sub.add_parser("populate", help="tier-output.json -> LiteLLM")
     populate.add_argument("--dry-run", action="store_true", help="show the diff without applying")
     run = sub.add_parser("run", help="fetch -> score -> populate in one go (no review gates)")
@@ -293,6 +323,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_fetch(args)
     if args.command == "score":
         return cmd_score(args)
+    if args.command == "refresh":
+        return cmd_refresh(args)
     if args.command == "populate":
         return cmd_populate(args)
     if args.command == "run":

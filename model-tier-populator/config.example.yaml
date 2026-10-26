@@ -569,6 +569,9 @@ providers:
 # -----------------------------------------------------------------------------
 # STRICT block — exactly these three keys, no extras (splat into LitellmConfig).
 litellm:
+  # NOTE: only `populate` contacts LiteLLM. `fetch` / `score` / `refresh` and the
+  # HTML report work with no LiteLLM server or master key — outside `populate`
+  # this whole block is just tier-label mapping for the reports.
   # VALUES: URL of the running LiteLLM proxy (the pipeline's management API).
   base_url: http://localhost:4000
   # VALUES: NAME of the env var holding the proxy master key (see .env.example).

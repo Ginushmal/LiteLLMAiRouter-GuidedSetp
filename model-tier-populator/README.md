@@ -45,14 +45,20 @@ Each phase reads/writes files, so any phase can be re-run on its own:
   Analysis canonical identity (exact match first, then the Jev classifier), and
   write `mappings.csv` for a human to review/fix.
 - **score** — compute a cost-per-task per model, mark the Pareto frontier, assign
-  SOTA-relative tiers, rank by NMB, and write `tier-output.json`.
+  SOTA-relative tiers, rank by NMB, and write `tier-output.json` plus the
+  readable reports (`tier-output.md`, `tier-ranking.md`, `tier-report.html`).
 - **populate** — diff the desired tier list against LiteLLM's current models and
   apply only the changes. Re-running is safe (idempotent).
+
+Two combined verbs: `run` (fetch → score → populate) and `refresh`
+(fetch → score only — it never contacts LiteLLM, so it works with no LiteLLM
+server or master key). Both stop at the first failing phase.
 
 ## Requirements
 
 - Python 3.10+ and [`uv`](https://docs.astral.sh/uv/)
 - A running LiteLLM proxy with `store_model_in_db: true` (already set in this repo)
+  — only needed for `populate`; `fetch`/`score`/`refresh` and the HTML report work without it
 - Keys in the **repo-root `.env`** (`D:\Softwares\LiteLLMAiRouter\.env`):
 
   | Key | Used for |
@@ -73,10 +79,20 @@ Run from the `model-pipeline/` directory:
 ```bash
 uv sync                                   # install deps (once)
 
+uv run model-pipeline refresh             # refresh + score in one go -> output/tier-report.html
+#   or double-click refresh-and-open.bat  # same refresh, then opens the report in your browser
+```
+
+`refresh` runs `fetch` then `score` and never touches LiteLLM — it is the
+one-click path for "what are the best models on my provider today". No
+LiteLLM server or master key is needed; the only secrets used are the
+provider + Artificial Analysis keys. For the gated manual workflow:
+
+```bash
 uv run model-pipeline fetch               # 1. fetch + dedup  -> output/mappings.csv
 #   review output/mappings.csv ; fix any 'override' cells for low-confidence rows
 
-uv run model-pipeline score               # 2. rank           -> output/tier-output.json
+uv run model-pipeline score               # 2. rank           -> output/tier-output.json + output/tier-report.html
 #   review output/tier-output.json
 
 uv run model-pipeline populate --dry-run  # 3a. preview the diff
@@ -121,6 +137,8 @@ $env:SSL_CERT_FILE = "$PWD\certs\ca-bundle.pem"
 | `suggested_config.yaml` | task-profile values suggested from provider docs (advisory) |
 | `tier-output.json` | **the tier list** — self-contained; all `populate` needs |
 | `tier-output.md` | same result as a readable table |
+| `tier-ranking.md` | full ranking story: every scored model, per-tier NMB rankings with the cut line, Pareto dominators, exclusions, limit flags |
+| `tier-report.html` | same story as a single self-contained page (no network needed), with an interactive Pareto chart and highlighted per-tier top picks — written by every `score`/`refresh`/`run`; open it in any browser, no LiteLLM required |
 
 ## Configuration
 
