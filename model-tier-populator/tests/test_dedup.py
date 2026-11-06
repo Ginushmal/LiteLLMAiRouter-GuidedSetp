@@ -159,3 +159,111 @@ def test_mappings_csv_roundtrip_and_override(tmp_path: Path):
     reloaded = read_mappings(path)
     assert reloaded[1].override == "glm-5-3-flash"
     assert reloaded[1].effective_slug == "glm-5-3-flash"
+
+
+# -- provider model_mappings overrides ------------------------------------
+def test_mapper_respects_provider_model_mappings_over_exact_match():
+    models = [
+        RawModel(
+            provider="commandcode",
+            model_id="deepseek/deepseek-v4.1-flash",
+            display_name="DeepSeek V4.1 Flash",
+        )
+    ]
+    canonical = [
+        CanonicalModel(slug="deepseek-v4-1-flash", name="DeepSeek V4.1 Flash (Old)"),
+        CanonicalModel(slug="deepseek-v4-1-flash-1017", name="DeepSeek V4.1 Flash 1017 (New)"),
+    ]
+
+    class _NoJev:
+        def choose(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("configured override must not call Jev")
+
+    cfg = SimpleNamespace(
+        dedup=DedupConfig(strip_suffixes=[], speed_suffixes=[], effort_tokens=[]),
+        jev=SimpleNamespace(candidate_shortlist_size=5, review_confidence_threshold=0.7),
+        providers={
+            "commandcode": SimpleNamespace(
+                model_mappings={
+                    "deepseek/deepseek-v4.1-flash": "deepseek-v4-1-flash-1017"
+                }
+            )
+        },
+    )
+
+    mappings = map_models(models, canonical, cfg, _NoJev())
+    assert len(mappings) == 1
+    m = mappings[0]
+    assert m.provider == "commandcode"
+    assert m.model_id == "deepseek/deepseek-v4.1-flash"
+    assert m.method == "override"
+    assert m.confidence == 1.0
+    assert m.canonical_slug == "deepseek-v4-1-flash-1017"
+    assert m.canonical_name == "DeepSeek V4.1 Flash 1017 (New)"
+    assert m.override == "deepseek-v4-1-flash-1017"
+    assert m.effective_slug == "deepseek-v4-1-flash-1017"
+
+
+def test_mapper_warns_and_leaves_unmapped_for_unknown_target_slug(capsys):
+    models = [
+        RawModel(
+            provider="commandcode",
+            model_id="deepseek/deepseek-v4.1-flash",
+            display_name="DeepSeek V4.1 Flash",
+        )
+    ]
+    canonical = [
+        CanonicalModel(slug="deepseek-v4-1-flash", name="DeepSeek V4.1 Flash"),
+    ]
+
+    class _NoJev:
+        def choose(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("override attempt must not call Jev")
+
+    cfg = SimpleNamespace(
+        dedup=DedupConfig(strip_suffixes=[], speed_suffixes=[], effort_tokens=[]),
+        jev=SimpleNamespace(candidate_shortlist_size=5, review_confidence_threshold=0.7),
+        providers={
+            "commandcode": SimpleNamespace(
+                model_mappings={
+                    "deepseek/deepseek-v4.1-flash": "nonexistent-target-slug"
+                }
+            )
+        },
+    )
+
+    mappings = map_models(models, canonical, cfg, _NoJev())
+    assert len(mappings) == 1
+    m = mappings[0]
+    assert m.method == "unmapped"
+    assert m.confidence == 0.0
+    assert m.canonical_slug is None
+    assert m.effective_slug is None
+    assert "Unknown canonical slug" in m.probabilities.get("_error", "")
+
+    err = capsys.readouterr().err
+    assert "warning:" in err
+    assert "commandcode" in err
+    assert "nonexistent-target-slug" in err
+
+
+def test_mapper_override_persists_to_mappings_csv(tmp_path: Path):
+    mapping = Mapping(
+        provider="commandcode",
+        model_id="deepseek/deepseek-v4.1-flash",
+        canonical_slug="deepseek-v4-1-flash-1017",
+        canonical_name="DeepSeek V4.1 Flash 1017",
+        variant="",
+        method="override",
+        confidence=1.0,
+        override="deepseek-v4-1-flash-1017",
+    )
+    path = tmp_path / "mappings.csv"
+    write_mappings(path, [mapping])
+
+    rows = read_mappings(path)
+    assert len(rows) == 1
+    assert rows[0].method == "override"
+    assert rows[0].override == "deepseek-v4-1-flash-1017"
+    assert rows[0].effective_slug == "deepseek-v4-1-flash-1017"
+

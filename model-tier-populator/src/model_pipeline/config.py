@@ -108,6 +108,7 @@ class AaConfig:
     pro_url: str
     api_key_env: str
     page_size: int
+    cache_ttl_hours: float = 6.0
 
 
 @dataclass
@@ -141,6 +142,13 @@ class ProviderConfig:
     # models.dev provider id(s) that publish this provider's models. Provider
     # metadata only — the model identities themselves come from the APIs.
     models_dev_provider_ids: list[str] = field(default_factory=list)
+    # Manual mappings: provider model_id -> canonical Artificial Analysis slug.
+    # Takes precedence over exact and Jev matching during deduplication.
+    model_mappings: dict[str, str] = field(default_factory=dict)
+    # Subscription plan the API key is on (provider-specific; empty = no filter).
+    # Providers that gate models behind plans use it to drop what the plan
+    # cannot serve — see providers/commandcode.py.
+    plan: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -284,6 +292,41 @@ def _pin_map(raw: Any) -> dict[str, list[str]]:
     return pins
 
 
+def _model_mapping_dict(raw: Any, provider: str) -> dict[str, str]:
+    """Normalise ``providers.<provider>.model_mappings`` (model_id -> canonical_slug)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"providers.{provider}.model_mappings must be a mapping of model_id -> canonical_slug, "
+            f"got {type(raw).__name__}"
+        )
+    mappings: dict[str, str] = {}
+    for model_id, slug in raw.items():
+        if not isinstance(model_id, str) or not isinstance(slug, str):
+            raise TypeError(
+                f"providers.{provider}.model_mappings keys and values must be strings; "
+                f"got {model_id!r}: {slug!r}"
+            )
+        clean_model_id = model_id.strip()
+        clean_slug = slug.strip()
+        if clean_model_id and clean_slug:
+            mappings[clean_model_id] = clean_slug
+    return mappings
+
+
+def _plan_name(raw: Any, provider: str) -> str:
+    """Normalise ``providers.<provider>.plan`` (subscription plan name)."""
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise TypeError(
+            f"providers.{provider}.plan must be a string (a plan name, or 'all' "
+            f"to disable plan filtering); got {type(raw).__name__}"
+        )
+    return raw.strip()
+
+
 def _validate_tier_names(
     tier_patterns: dict[str, list[str]],
     tier_floors: dict[str, float],
@@ -334,6 +377,8 @@ def load_config(config_path: Path | str | None = None) -> Config:
             extra_headers=raw.get("extra_headers", {}),
             supported_endpoints=raw.get("supported_endpoints", []),
             models_dev_provider_ids=raw.get("models_dev_provider_ids", []),
+            model_mappings=_model_mapping_dict(raw.get("model_mappings"), name),
+            plan=_plan_name(raw.get("plan"), name),
         )
 
     paths = data.get("paths", {})
@@ -391,7 +436,12 @@ def load_config(config_path: Path | str | None = None) -> Config:
             time_price_mode=time_price_mode,
             as_of=as_of,
         ),
-        aa=AaConfig(**data["aa"]),
+        aa=AaConfig(
+            **{
+                **data["aa"],
+                "cache_ttl_hours": float(data["aa"].get("cache_ttl_hours", 6.0)),
+            }
+        ),
         jev=JevConfig(**data["jev"]),
         dedup=DedupConfig(**data["dedup"]),
         exclude_patterns=data.get("exclude", {}).get("patterns", []) or [],

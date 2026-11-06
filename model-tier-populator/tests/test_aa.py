@@ -71,3 +71,41 @@ def test_fetch_raw_reuses_existing_cache_without_calling_the_api(tmp_path):
 
     assert client.fetch_raw() == rows
     assert http.calls == 0
+
+
+def test_fetch_raw_refetches_when_cache_expires(tmp_path):
+    import os
+    import time
+
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    cached_rows = [{"slug": "stale", "name": "Stale"}]
+    fresh_rows = [{"slug": "fresh", "name": "Fresh"}]
+    cache_file = output_dir / "aa_snapshot.json"
+    cache_file.write_text(json.dumps(cached_rows), encoding="utf-8")
+
+    # Set cache mtime to 7 hours in the past (exceeding default 6.0h TTL)
+    old_time = time.time() - (7 * 3600)
+    os.utime(cache_file, (old_time, old_time))
+
+    client, http = _client(tmp_path, {"data": fresh_rows, "pagination": {"has_more": False}})
+
+    assert client.fetch_raw(use_cache=True) == fresh_rows
+    assert http.calls == 1
+    # Verify disk cache was overwritten with fresh data
+    assert json.loads(cache_file.read_text(encoding="utf-8")) == fresh_rows
+
+
+def test_fetch_raw_bypasses_cache_when_use_cache_false(tmp_path):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    cached_rows = [{"slug": "cached", "name": "Cached"}]
+    fresh_rows = [{"slug": "fresh", "name": "Fresh"}]
+    cache_file = output_dir / "aa_snapshot.json"
+    cache_file.write_text(json.dumps(cached_rows), encoding="utf-8")
+
+    client, http = _client(tmp_path, {"data": fresh_rows, "pagination": {"has_more": False}})
+
+    assert client.fetch_raw(use_cache=False) == fresh_rows
+    assert http.calls == 1
+    assert json.loads(cache_file.read_text(encoding="utf-8")) == fresh_rows

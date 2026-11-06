@@ -92,10 +92,17 @@ one without the others.
    tier-output.json  -->  diff vs GET /model/info  -->  add / update / delete
                                                      (idempotent)
 
+   GUARDED: populate --interactive
+     print target (base URL/host, readiness, db, LiteLLM version)
+     print current pipeline-managed counts per model group
+     print the full diff (added / updated / deleted ids)
+     ask once: apply to <host>? [y/N]   (default No)
+
   COMBINED: run = fetch -> score -> populate · refresh = fetch -> score
     refresh never contacts LiteLLM, so it needs no LiteLLM server or master
-    key — it is the one-click path behind refresh-and-open.bat, which runs it
-    and opens tier-report.html in the default browser (only on success).
+    key. The one-click launcher runs refresh, opens tier-report.html in the
+    default browser (only on success), then offers the guarded populate step;
+    nothing is written unless the user answers y/yes.
 ```
 
 Why split? So a DB wipe can be fixed by re-running only `populate`, and tuning a
@@ -337,6 +344,14 @@ Pricing is injected inline (`input_cost_per_token`, `output_cost_per_token`,
 cost map is needed for these models. Only models whose id starts with `mp::` are
 touched — file-based `config.yaml` models are left alone.
 
+`populate --interactive` runs the same diff as a preview first. It prints the
+configured base URL/host, live readiness (database status and LiteLLM version),
+the current pipeline-managed model counts per group, and every add/update/delete
+id. It then asks one question; only `y`/`yes` applies, so the default is to
+leave the server unchanged. The preview and the apply use the same computed
+plan. `populate` without the flag keeps applying immediately, and `--dry-run`
+keeps returning the diff without prompting.
+
 ---
 
 ## 8. Token limits (models.dev)
@@ -471,6 +486,11 @@ Everything downstream (dedup, scoring, populate) works unchanged.
 - **CommandCode Claude needs `api_base: .../provider`** (LiteLLM appends
   `/v1/messages`). Do **not** add an `Authorization` header — LiteLLM sends two
   credentials and CC rejects them.
+- **CommandCode `/models` over-reports availability.** It lists every model the
+  gateway can serve; premium ones need Pro/Max. The adapter reads each model's
+  `minPlanName` from the catalog page's embedded loader data and drops anything
+  above `providers.commandcode.plan`. If that data ever disappears the phase
+  fails loudly instead of shipping models the plan cannot use.
 - **OpenCode needs `x-opencode-session`** on every request — injected via
   `extra_headers` (one static value for gateway traffic).
 - **OpenCode `responses`/`google` models are deferred** (grok / gpt-luna / muse /

@@ -7,6 +7,7 @@ import yaml
 
 from model_pipeline.config import (
     PROJECT_ROOT,
+    _model_mapping_dict,
     _pin_map,
     _tier_pattern_map,
     _validate_tier_names,
@@ -161,3 +162,35 @@ def test_example_template_stays_loadable():
     cfg = load_config(PROJECT_ROOT / "config.example.yaml")
     assert cfg.nmb.tier_names
     assert cfg.providers
+
+
+# -- provider model_mappings -----------------------------------------------
+def test_model_mapping_dict_accepts_clean_mappings_and_none():
+    assert _model_mapping_dict(None, "cmdcode") == {}
+    assert _model_mapping_dict({}, "cmdcode") == {}
+    assert _model_mapping_dict(
+        {"  deepseek/v4.1  ": " deepseek-v4-1 ", "": "empty"}, "cmdcode"
+    ) == {"deepseek/v4.1": "deepseek-v4-1"}
+
+
+def test_model_mapping_dict_rejects_non_dict_or_non_strings():
+    with pytest.raises(TypeError, match="must be a mapping"):
+        _model_mapping_dict(["invalid"], "cmdcode")
+    with pytest.raises(TypeError, match="must be strings"):
+        _model_mapping_dict({"model": 123}, "cmdcode")
+    with pytest.raises(TypeError, match="must be strings"):
+        _model_mapping_dict({123: "slug"}, "cmdcode")
+
+
+def test_load_config_parses_provider_model_mappings(tmp_path):
+    data = yaml.safe_load((PROJECT_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    data["providers"]["commandcode"]["model_mappings"] = {
+        "deepseek/deepseek-v4.1-flash": "deepseek-v4-1-flash-1017"
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    cfg = load_config(path)
+    assert cfg.providers["commandcode"].model_mappings == {
+        "deepseek/deepseek-v4.1-flash": "deepseek-v4-1-flash-1017"
+    }

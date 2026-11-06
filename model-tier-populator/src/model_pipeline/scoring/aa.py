@@ -11,6 +11,7 @@ The snapshot is cached to disk so re-runs stay well under the free tier's
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,14 @@ class AaClient:
         self.http = http
         self.recorder = recorder
         self.cache_path: Path = cfg.output_dir / "aa_snapshot.json"
+
+    def _cache_age_seconds(self) -> float | None:
+        if not self.cache_path.exists():
+            return None
+        try:
+            return max(0.0, time.time() - self.cache_path.stat().st_mtime)
+        except OSError:
+            return None
 
     def _record(self, url: str, resp=None, error: str = "", count: int | None = None) -> None:
         self.recorder.record(
@@ -43,8 +52,32 @@ class AaClient:
         )
 
     def fetch_raw(self, use_cache: bool = True) -> list[dict[str, Any]]:
-        if use_cache and self.cache_path.exists():
-            return json.loads(self.cache_path.read_text(encoding="utf-8"))
+        ttl_hours = getattr(self.cfg.aa, "cache_ttl_hours", 6.0)
+        ttl_seconds = ttl_hours * 3600.0
+
+        if use_cache:
+            age_seconds = self._cache_age_seconds()
+            if age_seconds is not None:
+                if age_seconds <= ttl_seconds:
+                    if age_seconds < 3600:
+                        age_str = f"{int(age_seconds // 60)}m"
+                    else:
+                        age_str = f"{age_seconds / 3600:.1f}h"
+                    print(
+                        f"  using cached Artificial Analysis snapshot "
+                        f"({age_str} old, ttl: {ttl_hours:g}h)..."
+                    )
+                    return json.loads(self.cache_path.read_text(encoding="utf-8"))
+                else:
+                    age_hours = age_seconds / 3600.0
+                    print(
+                        f"  cached Artificial Analysis snapshot expired "
+                        f"({age_hours:.1f}h old > ttl {ttl_hours:g}h), fetching fresh from API..."
+                    )
+            else:
+                print("  fetching fresh Artificial Analysis canonical models from API...")
+        else:
+            print("  fetching fresh Artificial Analysis canonical models from API (cache bypassed)...")
 
         headers = {"x-api-key": self.cfg.secret(self.cfg.aa.api_key_env)}
         page = 1

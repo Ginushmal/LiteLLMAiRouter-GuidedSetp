@@ -2,6 +2,8 @@
 
 Requires ``store_model_in_db: true`` (already enabled in this project).
 Endpoints used:
+  GET   /health/readiness/details  server identity (version, db) for a preview
+  GET   /health/readiness         fallback identity on older/limited servers
   GET   /model/info             list models
   POST  /model/new              create
   PATCH /model/{model_id}/update  update (merges litellm_params and model_info)
@@ -34,6 +36,40 @@ class LiteLLMClient:
         return {
             "Authorization": f"Bearer {self.master_key}",
             "Content-Type": "application/json",
+        }
+
+    def server_details(self) -> dict[str, Any]:
+        """Live proxy identity for a populate preview.
+
+        ``/health/readiness/details`` needs the master key and returns the
+        version plus database status on current releases. When it is
+        unavailable (older server, restricted deployment), fall back to the
+        public readiness probe: status and db still work, version is unknown.
+        The master key itself is never returned.
+        """
+        headers = self._headers()
+        details = self.http.get(
+            f"{self.base_url}/health/readiness/details", headers=headers
+        )
+        if details.status_code == 200:
+            data = details.json()
+            return {
+                "base_url": self.base_url,
+                "status": data.get("status"),
+                "db": data.get("db"),
+                "version": data.get("litellm_version"),
+                "detailed": True,
+            }
+
+        readiness = self.http.get(f"{self.base_url}/health/readiness", headers=headers)
+        readiness.raise_for_status()
+        data = readiness.json()
+        return {
+            "base_url": self.base_url,
+            "status": data.get("status"),
+            "db": data.get("db"),
+            "version": None,
+            "detailed": False,
         }
 
     def list_models(self) -> list[dict[str, Any]]:

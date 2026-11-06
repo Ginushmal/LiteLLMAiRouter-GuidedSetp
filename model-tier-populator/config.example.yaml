@@ -252,7 +252,7 @@ pricing:
 # -----------------------------------------------------------------------------
 # ARTIFICIAL ANALYSIS (intelligence + reference prices)
 # -----------------------------------------------------------------------------
-# STRICT block — exactly these four keys, no extras (splat into AaConfig).
+# STRICT block — splat into AaConfig.
 aa:
   # Free-tier models list (intelligence index + input/output/cache prices +
   # cost_per_task.total_cost). Pro-tier per-task token counts are optional.
@@ -262,6 +262,10 @@ aa:
   pro_url: https://artificialanalysis.ai/api/v2/language/models
   api_key_env: ARTIFICIAL_ANALYSIS_API_KEY
   page_size: 200
+  # How long (in hours) the on-disk snapshot (output/aa_snapshot.json) is
+  # considered fresh before an automatic refetch is triggered.
+  # VALUES: float or integer >= 0 (e.g. 6 = 6 hours). Default: 6.
+  cache_ttl_hours: 6
 
 # -----------------------------------------------------------------------------
 # TOKEN LIMITS (models.dev)
@@ -475,13 +479,23 @@ pins:
 # Per-provider keys:
 #   REQUIRED: api_base, models_url, api_key_env, pricing_url
 #   OPTIONAL: enabled (default true), litellm, extra_headers,
-#             supported_endpoints, models_dev_provider_ids
+#             supported_endpoints, models_dev_provider_ids,
+#             model_mappings, plan
 #   Unknown keys are IGNORED here (unlike the strict blocks above).
 providers:
   commandcode:
     # VALUES: true | false. false = skipped entirely (no key needed, nothing
     # fetched). Disable providers whose key you do not have.
     enabled: true
+    # Subscription plan this key is on. The Provider API advertises every model
+    # the gateway can serve — including premium ones your plan cannot use — so
+    # `fetch` drops models whose minimum plan is above this value. Read from the
+    # catalog page's own `minPlanName` field, never assumed. Plans are
+    # cumulative: GOAT also gets every Go model.
+    # VALUES: GO | GOAT | PRO | MAX  (case-insensitive), or all = no filter
+    # (pay-as-you-go keys that buy premium models with extra credits).
+    # Omitted/empty = no filter, exactly the old behavior.
+    plan: GOAT
     # VALUES: URLs. api_base has its trailing slash trimmed by the loader.
     # pricing_url may be "" when the models catalog already carries prices
     # (see openrouter below).
@@ -496,6 +510,15 @@ providers:
     # VALUES: list of catalog provider id strings. Omitted/empty = fall back to
     # this block's own name.
     models_dev_provider_ids: ["commandcode"]
+    # OPTIONAL. Manual mapping overrides: provider model_id -> canonical Artificial
+    # Analysis slug. Takes precedence over automated exact and Jev matching during
+    # deduplication. Use when a provider serves a newer or specific model under a
+    # generic/older name (e.g. CommandCode serving deepseek-v4-1-flash-1017 under
+    # the bare deepseek/deepseek-v4.1-flash ID).
+    # VALUES: mapping provider model_id string -> canonical slug string.
+    model_mappings:
+      "deepseek/deepseek-v4.1-flash": "deepseek-v4-1-flash-1017"
+      "deepseek/deepseek-v4.1-flash-fast": "deepseek-v4-1-flash-1017"
     # LiteLLM deployment defaults for this provider. The keys are read by THIS
     # provider's adapter when it assembles the /model/new payload; the adapters
     # in this repo read:

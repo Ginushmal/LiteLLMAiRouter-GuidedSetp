@@ -60,3 +60,11 @@ def test_fetch_score_and_run_accept_as_of():
     for command in ("fetch", "score", "refresh", "run"):
         args = build_parser().parse_args([command, "--as-of", "2026-10-22T18:00Z"])
         assert args.as_of == "2026-10-22T18:00Z"
+
+
+def test_fetch_refresh_and_run_accept_no_cache():
+    for command in ("fetch", "refresh", "run"):
+        args = build_parser().parse_args([command, "--no-cache"])
+        assert args.no_cache is True
+        args_refresh = build_parser().parse_args([command, "--refresh-aa"])
+        assert args_refresh.refresh_aa is True

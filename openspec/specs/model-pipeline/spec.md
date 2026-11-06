@@ -64,14 +64,19 @@ The pipeline SHALL fetch available model lists and pricing data from configured 
 - **THEN** it SHALL save the raw fetched content (HTML or JSON) to disk alongside a structured log entry recording the URL, timestamp, HTTP status, parse result count, and any errors — enabling AI-assisted debugging if the provider's page structure changes
 
 ### Requirement: Canonical model deduplication
-The pipeline SHALL map each provider model name to a canonical model identity from the Artificial Analysis model catalog. The canonical identity SHALL be a compound key of base model name and variant (parameter count, effort level, thinking mode, etc.) to prevent cross-matching between different variants (e.g., qwen3-4b vs qwen3-26b, mimo-2.6 vs mimo-2.6-high).
+The pipeline SHALL map each provider model name to a canonical model identity from the Artificial Analysis model catalog. The canonical identity SHALL be a compound key of base model name and variant (parameter count, effort level, thinking mode, etc.) to prevent cross-matching between different variants (e.g., qwen3-4b vs qwen3-26b, mimo-2.6 vs mimo-2.6-high). Provider configuration model mappings SHALL take absolute precedence over automated matching.
+
+#### Scenario: Provider configuration model mapping overrides
+- **WHEN** a provider's configuration defines `model_mappings` and a provider model ID matches a configured key
+- **THEN** the pipeline SHALL map the model directly to the configured canonical slug before exact matching or Jev classification, record the method as "override" with confidence 1.0, and populate both `canonical_slug` and `override` fields with the target canonical slug
+- **AND** when the target canonical slug does not exist in the canonical catalog, the pipeline SHALL report a warning and record the model as unmapped rather than inventing an identity
 
 #### Scenario: Exact match (100% confidence)
-- **WHEN** a provider model name matches a canonical model name exactly after normalization (lowercase, strip provider prefix, strip date/size suffixes)
+- **WHEN** a provider model name matches a canonical model name exactly after normalization (lowercase, strip provider prefix, strip date/size suffixes) and has no configured override
 - **THEN** the mapping is recorded with method "exact" and confidence 1.0
 
 #### Scenario: Jev classifier for ambiguous names
-- **WHEN** a provider model name does not match any canonical name exactly
+- **WHEN** a provider model name does not match any configured override or canonical name exactly
 - **THEN** the pipeline SHALL pre-filter the AA canonical list to a manageable candidate set (approximately 80 candidates) purely by name similarity (vendor name, model family, token overlap), WITHOUT excluding candidates on variant signals, and SHALL force-include the nearest canonical slug so the most obvious candidate is never lost to ranking noise
 - **THEN** it SHALL call the Jev (TypeSafe) Choice classifier with the provider model name as state and the candidate list as choice options — each option description carrying that canonical's variant (parameter count, effort level) — plus an "unmapped" option
 - **THEN** the classifier SHALL return the best-matching canonical name, a confidence score (0–1), and a full probability distribution
@@ -94,11 +99,11 @@ The pipeline SHALL map each provider model name to a canonical model identity fr
 
 #### Scenario: Mappings checkpoint CSV
 - **WHEN** the fetch phase completes deduplication
-- **THEN** it SHALL write all mappings to a CSV file with columns for provider name, provider model ID, canonical AA slug, canonical AA name, variant, match method, confidence score, and an empty "override" column for manual corrections
+- **THEN** it SHALL write all mappings to a CSV file with columns for provider name, provider model ID, canonical AA slug, canonical AA name, variant, match method, confidence score, and an "override" column carrying any configuration or manual corrections
 - **AND** the pipeline SHALL halt and wait for human review of this CSV before the score phase can proceed
 
 ### Requirement: Human review gate between phases
-The pipeline SHALL execute as three independent invocations (fetch, score, populate) with clean artifact-based handoffs. Each phase reads its inputs from files on disk and writes its outputs to files on disk. Later phases can be re-run without re-running earlier phases.
+The pipeline SHALL execute as three independent invocations (fetch, score, populate) with clean artifact-based handoffs, plus a `refresh` verb that runs fetch then score without populate. Each phase reads its inputs from files on disk and writes its outputs to files on disk. Later phases can be re-run without re-running earlier phases.
 
 #### Scenario: Three separate invocations
 - **WHEN** the user invokes the pipeline
@@ -107,6 +112,10 @@ The pipeline SHALL execute as three independent invocations (fetch, score, popul
 #### Scenario: Combined run
 - **WHEN** the user wants an unattended run (e.g. on a schedule)
 - **THEN** the pipeline SHALL provide a single `run` command that executes fetch, score, and populate in sequence and stops at the first phase that fails; this bypasses the human-review gates, which remain available through the individual commands
+
+#### Scenario: Refresh run without populate
+- **WHEN** the user wants the day's scored and tiered list without touching LiteLLM
+- **THEN** the pipeline SHALL provide a single `refresh` command that executes fetch then score in sequence and stops at the first phase that fails, and SHALL NOT run populate; the human-review gates remain available through the individual commands
 
 #### Scenario: Re-run populate without recompute
 - **WHEN** the populate phase has been run and the LiteLLM database is subsequently cleared or corrupted
@@ -292,8 +301,8 @@ the calibration inputs in its artifacts.
 
 ### Requirement: Ranking explainability report
 
-The pipeline SHALL produce a human-readable report that explains the ranking for every
-scored model, so a user can see why a model did or did not land in a tier.
+The pipeline SHALL produce human-readable reports that explain the ranking for every
+scored model, so a user can see why a model did or did not land in a tier. The Markdown ranking report and the self-contained HTML tier report SHALL carry the same ranking coverage.
 
 #### Scenario: Per-tier full ranking with NMB breakdown
 
@@ -315,6 +324,11 @@ scored model, so a user can see why a model did or did not land in a tier.
 - **WHEN** a model is off the Pareto frontier
 - **THEN** the report SHALL name a model that dominates it (smarter AND cheaper), so a
   user can see why the model was only ever a backup
+
+#### Scenario: HTML report matches Markdown coverage
+
+- **WHEN** the score phase completes
+- **THEN** it SHALL also write the self-contained HTML tier report carrying the same tier cards, model index, per-tier rankings with cut line, dominators, exclusions, limit flags, pin warnings, and low-confidence mapping warning as the Markdown reports
 
 ### Requirement: Token limit resolution
 Before emitting deployments, the pipeline SHALL resolve each model's real output token limit from the public models.dev catalog, and SHALL derive the input limit from the provider-published context window and the resolved output limit. The pipeline SHALL NOT hardcode model identities in configuration and SHALL NOT invent a token limit when resolution fails.
@@ -411,3 +425,78 @@ defined in a configuration file, not hardcoded in source code.
   `instant`) and the optional schedule evaluation instant SHALL be settable in
   configuration or per run, and both SHALL carry the inline comments required of every
   parameter
+
+### Requirement: Artificial Analysis catalog caching and freshness
+The pipeline SHALL cache fetched Artificial Analysis canonical models on disk to minimize API calls and respect rate limits, but SHALL enforce a configurable time-to-live (TTL) to prevent indefinite staleness of model scores, latencies, and canonical identities.
+
+#### Scenario: Reusing fresh snapshot cache
+- **WHEN** `output/aa_snapshot.json` exists on disk and its file modification timestamp is within the configured `aa.cache_ttl_hours` (default 6 hours)
+- **THEN** `AaClient` SHALL read the canonical models from disk and avoid calling the Artificial Analysis API
+
+#### Scenario: Invalidation and refetch on TTL expiration
+- **WHEN** `output/aa_snapshot.json` exists on disk but its file modification timestamp is older than `aa.cache_ttl_hours`
+- **THEN** `AaClient` SHALL treat the cache as expired, fetch fresh canonical models from the Artificial Analysis API, and write the updated snapshot to `output/aa_snapshot.json`
+
+#### Scenario: Configurable cache TTL in config
+- **WHEN** `aa.cache_ttl_hours` is defined in `config.yaml`
+- **THEN** the configuration loader SHALL parse it as a float/integer number of hours; if absent, it SHALL default to 6.0 hours
+
+#### Scenario: Transparent cache source and age logging
+- **WHEN** canonical models are loaded in `fetch`, `score`, `refresh`, or `run`
+- **THEN** the pipeline console output SHALL explicitly report whether models were loaded from disk cache (including approximate cache age in hours/minutes) or fetched live from the API
+
+### Requirement: CLI cache bypass flags
+The pipeline CLI SHALL support flags to bypass the disk cache on demand during fetching and scoring operations.
+
+#### Scenario: Bypassing cache via --no-cache or --refresh-aa
+- **WHEN** the user runs `fetch`, `refresh`, or `run` with `--no-cache` or `--refresh-aa`
+- **THEN** the pipeline SHALL bypass `output/aa_snapshot.json`, make live network requests to Artificial Analysis, and overwrite `output/aa_snapshot.json` with the newly fetched data
+
+#### Scenario: Offline score behavior preserves cache by default
+- **WHEN** the user runs `score` without cache-bypass flags
+- **THEN** it SHALL use the existing `output/aa_snapshot.json` artifact to ensure offline re-scoring remains functional
+
+### Requirement: Interactive LiteLLM population preview
+
+The pipeline SHALL provide an interactive populate mode that identifies the
+configured LiteLLM target, shows the pending changes, and asks for one explicit
+confirmation before writing anything.
+
+#### Scenario: Target server is identified before the prompt
+
+- **WHEN** the user starts populate in interactive mode and the configured target is reachable and authenticated
+- **THEN** the pipeline SHALL print the configured base URL and host plus live server information (readiness status, database status, and LiteLLM version), together with the current total model count and the count of pipeline-managed models grouped by model group
+
+#### Scenario: Pending diff is shown before confirmation
+
+- **WHEN** the interactive preview reads `tier-output.json` and the current LiteLLM model list
+- **THEN** it SHALL print the dry-run diff summary (added, updated, deleted, unchanged counts) and list every deployment id in the added, updated, and deleted sets
+- **AND** it SHALL NOT create, update, or delete any LiteLLM model before the confirmation is accepted
+
+#### Scenario: One confirmation with a safe default
+
+- **WHEN** the preview has been printed
+- **THEN** the pipeline SHALL ask exactly one question about applying the shown changes
+- **AND** an empty answer, `n`, or `no` SHALL decline, leave LiteLLM unchanged, and exit successfully
+- **AND** `y` or `yes` SHALL apply exactly the diff that was shown
+
+#### Scenario: Accepted changes use the previewed plan
+
+- **WHEN** the user accepts the prompt
+- **THEN** the pipeline SHALL apply the same added, updated, and deleted sets that the preview displayed, and SHALL report the applied result and any errors
+
+#### Scenario: Unreachable target or missing credentials never prompt
+
+- **WHEN** the configured LiteLLM target cannot be reached, rejects the master key, or the master key is missing
+- **THEN** the pipeline SHALL print the reason and the target URL, SHALL NOT ask for confirmation, and SHALL NOT change any model
+
+#### Scenario: Missing tier list never prompts
+
+- **WHEN** `tier-output.json` does not exist
+- **THEN** the pipeline SHALL print the existing missing-artifact error and SHALL NOT contact LiteLLM or ask for confirmation
+
+#### Scenario: Non-interactive populate is unchanged
+
+- **WHEN** the user runs populate without the interactive mode
+- **THEN** it SHALL keep applying the diff without a prompt, and `--dry-run` SHALL keep showing the diff without applying it
+

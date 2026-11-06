@@ -66,6 +66,27 @@ class SyncReport:
         )
 
 
+@dataclass
+class SyncPlan:
+    """A computed diff, before any write.
+
+    ``desired`` and ``current`` are needed to apply the plan; ``report`` carries
+    the observable added/updated/deleted/unchanged sets so a preview and the
+    subsequent apply can never disagree.
+    """
+
+    desired: dict[str, dict] = field(default_factory=dict)
+    current: dict[str, dict] = field(default_factory=dict)
+    report: SyncReport = field(default_factory=SyncReport)
+
+    def summary(self) -> str:
+        report = self.report
+        return (
+            f"added={len(report.added)} updated={len(report.updated)} "
+            f"deleted={len(report.deleted)} unchanged={report.unchanged}"
+        )
+
+
 def _close(a: Any, b: Any) -> bool:
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return abs(float(a) - float(b)) <= max(1e-12, abs(float(a)) * 1e-6)
@@ -76,9 +97,10 @@ def _params_differ(desired: dict, current: dict) -> bool:
     for key in _COMPARED_PARAM_KEYS:
         if key in desired and not _close(desired.get(key), current.get(key)):
             return True
-    if "extra_headers" in desired and desired.get("extra_headers") != current.get("extra_headers"):
-        return True
-    return False
+    return bool(
+        "extra_headers" in desired
+        and desired.get("extra_headers") != current.get("extra_headers")
+    )
 
 
 def _info_differ(desired: dict, current: dict) -> bool:
@@ -118,10 +140,13 @@ def _current_index(models: list[dict]) -> dict[str, dict]:
     return index
 
 
-def sync(payload: dict, cfg: Config, http: HttpClient, apply: bool = True) -> SyncReport:
-    client = LiteLLMClient(cfg, http)
-    report = SyncReport()
+def build_plan(payload: dict, current_models: list[dict]) -> SyncPlan:
+    """Compute the diff without writing anything.
 
+    ``current_models`` is the ``data`` list from ``GET /model/info``. Splitting
+    this from the apply step lets interactive mode show exactly the plan it will
+    later apply.
+    """
     desired: dict[str, dict] = {}
     for tier in payload.get("tiers", []):
         for dep in tier.get("deployments", []):
@@ -136,7 +161,7 @@ def sync(payload: dict, cfg: Config, http: HttpClient, apply: bool = True) -> Sy
             full_payload.setdefault("model_id", mid)
             desired[mid] = full_payload
 
-    current = _current_index(client.list_models())
+    current = _current_index(current_models)
 
     to_add = [k for k in desired if k not in current]
     to_update = [
@@ -149,22 +174,45 @@ def sync(payload: dict, cfg: Config, http: HttpClient, apply: bool = True) -> Sy
         )
     ]
     to_delete = [k for k in current if k not in desired]
-    report.unchanged = len(desired) - len(to_add) - len(to_update)
+    report = SyncReport(
+        added=to_add,
+        updated=to_update,
+        deleted=to_delete,
+        unchanged=len(desired) - len(to_add) - len(to_update),
+    )
+    return SyncPlan(desired=desired, current=current, report=report)
 
-    for key in to_add:
-        report.added.append(key)
-        if apply:
-            _apply(client.add_model(desired[key]), key, report)
-    for key in to_update:
-        report.updated.append(key)
-        if apply:
-            _apply(client.patch_model(key, _update_body(desired[key])), key, report)
-    for key in to_delete:
-        report.deleted.append(key)
-        if apply:
-            _apply(client.delete_model(key), key, report)
 
+def apply_plan(client: LiteLLMClient, plan: SyncPlan) -> SyncReport:
+    """Apply a previously computed plan, returning the write report."""
+    report = SyncReport(
+        added=list(plan.report.added),
+        updated=list(plan.report.updated),
+        deleted=list(plan.report.deleted),
+        unchanged=plan.report.unchanged,
+    )
+    for key in plan.report.added:
+        _apply(client.add_model(plan.desired[key]), key, report)
+    for key in plan.report.updated:
+        _apply(
+            client.patch_model(key, _update_body(plan.desired[key])), key, report
+        )
+    for key in plan.report.deleted:
+        _apply(client.delete_model(key), key, report)
     return report
+
+
+def sync(payload: dict, cfg: Config, http: HttpClient, apply: bool = True) -> SyncReport:
+    client = LiteLLMClient(cfg, http)
+    plan = build_plan(payload, client.list_models())
+    if not apply:
+        return SyncReport(
+            added=list(plan.report.added),
+            updated=list(plan.report.updated),
+            deleted=list(plan.report.deleted),
+            unchanged=plan.report.unchanged,
+        )
+    return apply_plan(client, plan)
 
 
 def _apply(resp, key: str, report: SyncReport) -> None:

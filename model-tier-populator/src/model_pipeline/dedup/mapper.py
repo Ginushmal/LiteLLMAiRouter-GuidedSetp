@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from model_pipeline.config import Config
 from model_pipeline.dedup.jev import JevClient
 from model_pipeline.dedup.normalize import CanonicalIndex
@@ -44,6 +46,55 @@ def map_models(
 
     for m in models:
         variant = parse_variant(m.display_name, cfg.dedup.effort_tokens).label()
+
+        # 0. Configured provider override (takes precedence over exact and Jev).
+        providers_dict = getattr(cfg, "providers", {}) or {}
+        pcfg = providers_dict.get(m.provider)
+        override_slug = None
+        if pcfg:
+            model_mappings = getattr(pcfg, "model_mappings", {}) or {}
+            override_slug = (
+                model_mappings.get(m.model_id)
+                or model_mappings.get(m.model_id.strip())
+                or model_mappings.get(m.display_name)
+            )
+
+        if override_slug:
+            clean_slug = override_slug.strip()
+            target_canonical = by_slug.get(clean_slug)
+            if target_canonical is None:
+                print(
+                    f"warning: providers.{m.provider}.model_mappings: target slug {override_slug!r} "
+                    f"for {m.model_id!r} not found in canonical models; leaving unmapped",
+                    file=sys.stderr,
+                )
+                mappings.append(
+                    Mapping(
+                        provider=m.provider,
+                        model_id=m.model_id,
+                        canonical_slug=None,
+                        canonical_name=None,
+                        variant=variant,
+                        method="unmapped",
+                        confidence=0.0,
+                        probabilities={"_error": f"Unknown canonical slug: {override_slug}"},
+                    )
+                )
+            else:
+                mappings.append(
+                    Mapping(
+                        provider=m.provider,
+                        model_id=m.model_id,
+                        canonical_slug=target_canonical.slug,
+                        canonical_name=target_canonical.name,
+                        variant=variant,
+                        method="override",
+                        confidence=1.0,
+                        probabilities={target_canonical.slug: 1.0},
+                        override=target_canonical.slug,
+                    )
+                )
+            continue
 
         # 1. Exact match (100% confidence, no classifier call).
         exact = index.exact(m.display_name) or index.exact(m.model_id)

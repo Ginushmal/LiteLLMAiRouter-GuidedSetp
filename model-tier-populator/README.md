@@ -41,9 +41,10 @@ and keeps it in the database where it can be updated without a restart.
 
 Each phase reads/writes files, so any phase can be re-run on its own:
 
-- **fetch** — pull provider catalogs + prices, map each model to an Artificial
-  Analysis canonical identity (exact match first, then the Jev classifier), and
-  write `mappings.csv` for a human to review/fix.
+- **fetch** — pull provider catalogs + prices, drop models your subscription
+  plan cannot serve, map each model to an Artificial Analysis canonical identity
+  (exact match first, then the Jev classifier), and write `mappings.csv` for a
+  human to review/fix.
 - **score** — compute a cost-per-task per model, mark the Pareto frontier, assign
   SOTA-relative tiers, rank by NMB, and write `tier-output.json` plus the
   readable reports (`tier-output.md`, `tier-ranking.md`, `tier-report.html`).
@@ -52,7 +53,9 @@ Each phase reads/writes files, so any phase can be re-run on its own:
 
 Two combined verbs: `run` (fetch → score → populate) and `refresh`
 (fetch → score only — it never contacts LiteLLM, so it works with no LiteLLM
-server or master key). Both stop at the first failing phase.
+server or master key). Both stop at the first failing phase. The one-click
+launcher runs `refresh`, opens the report, then offers the guarded
+`populate --interactive` step described below.
 
 ## Requirements
 
@@ -80,13 +83,23 @@ Run from the `model-pipeline/` directory:
 uv sync                                   # install deps (once)
 
 uv run model-pipeline refresh             # refresh + score in one go -> output/tier-report.html
-#   or double-click refresh-and-open.bat  # same refresh, then opens the report in your browser
+#   or double-click refresh-and-open.bat  # same refresh, opens the report, then offers an optional populate preview
 ```
 
 `refresh` runs `fetch` then `score` and never touches LiteLLM — it is the
 one-click path for "what are the best models on my provider today". No
 LiteLLM server or master key is needed; the only secrets used are the
-provider + Artificial Analysis keys. For the gated manual workflow:
+provider + Artificial Analysis keys.
+
+`populate --interactive` is the guarded apply step. It prints the configured
+server (base URL/host, readiness, database, LiteLLM version), the current
+pipeline-managed model counts per tier group, and the full diff, then asks one
+question. Only `y`/`yes` applies; anything else leaves LiteLLM unchanged.
+`populate` without the flag still applies immediately (for automation), and
+`populate --dry-run` previews without prompting. The launcher runs the
+interactive form after opening the report.
+
+For the gated manual workflow:
 
 ```bash
 uv run model-pipeline fetch               # 1. fetch + dedup  -> output/mappings.csv
@@ -99,19 +112,32 @@ uv run model-pipeline populate --dry-run  # 3a. preview the diff
 uv run model-pipeline populate            # 3b. apply to LiteLLM
 ```
 
-## TLS note — endpoint uses a self-signed cert (temporary)
+## TLS note — endpoint is signed by an internal CA
 
-The LiteLLM endpoint in `config.yaml` (`litellm.base_url`) is fronted by an nginx
-whose certificate is self-signed. The pipeline always verifies TLS and has no
-off switch; instead, Python trusts an explicit certificate bundle via the
-`SSL_CERT_FILE` environment variable. Note that variable **replaces** the CA
-bundle (it does not add to it), so the bundle must also contain the normal
-public roots — otherwise the provider fetches fail too.
+The LiteLLM endpoint in `config.yaml` (`litellm.base_url`) is fronted by nginx
+with a certificate issued by the company's internal CA
+(`CN=boardpac-BOARDPACDC1-CA`). That CA is not in the public root store Python
+ships with, so verification fails against `certifi`:
 
-- `certs/elevate-ironone-com.pem` — a copy of the server's certificate
-  (`scp iot-launchpad-server:/etc/nginx/ssl/elevate.crt`).
-- `certs/ca-bundle.pem` — that certificate **plus** the public roots from
-  certifi. This is the file to use.
+```
+[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed:
+self-signed certificate in certificate chain (_ssl.c:1032)
+```
+
+That message is literal: the server sends **its own root as a chain
+certificate**, and the last cert in the chain is self-signed and not known to
+Python. (A public CA never sends its root in the chain; an internal CA
+frequently does.)
+
+The pipeline always verifies TLS and has no off switch; instead, Python trusts
+an explicit certificate bundle via `SSL_CERT_FILE`. That variable **replaces**
+the CA bundle (it does not add to it), so the bundle must also contain the
+normal public roots — otherwise the provider fetches fail too.
+
+- `certs/company-root-ca.pem` — the endpoint's **issuing CA**, taken from the
+  live handshake.
+- `certs/ca-bundle.pem` — certifi's public roots **plus** that CA. This is the
+  file to use.
 
 In PowerShell, set it in the session **before** any command that talks to the
 network (`fetch`, `run`, `populate`):
@@ -120,11 +146,22 @@ network (`fetch`, `run`, `populate`):
 $env:SSL_CERT_FILE = "$PWD\certs\ca-bundle.pem"
 ```
 
-- If the server's cert is regenerated, re-copy it, then rebuild the bundle:
-  `Get-Content .venv\Lib\site-packages\certifi\cacert.pem, certs\elevate-ironone-com.pem | Set-Content certs\ca-bundle.pem -Encoding ascii`
-  (also rebuild after a `uv sync` that updates certifi).
-- Once the endpoint has a proper CA-signed cert: stop setting `SSL_CERT_FILE`
-  and delete `certs/`.
+`refresh-and-open.bat` sets it for you when the bundle exists.
+
+Rebuild the bundle after a cert change or a `uv sync` that updates certifi:
+
+```powershell
+.venv\Scripts\python.exe rebuild_ca_bundle.py
+```
+
+The script re-reads the issuing CA from the live TLS handshake, rewrites
+`certs/company-root-ca.pem`, and regenerates `certs/ca-bundle.pem`.
+
+Open items (infrastructure, not pipeline): stop sending the root in the served
+chain, deploy the internal CA to client machines (GPO), and exclude the host
+from antivirus TLS inspection — interception replaces the certificate with one
+signed by a local "SSL Filter CA", which is what makes browser behaviour differ
+between machines.
 
 
 ## Outputs (`output/`)
@@ -181,6 +218,13 @@ never `peak_windows_utc`; context-threshold prices still collapse via
 
 "Deferred" protocols (OpenCode `responses`/`google`) need extra LiteLLM wiring,
 so those models are excluded from tiers for now.
+
+CommandCode's Provider API lists every model the gateway can serve, including
+premium ones a lower subscription plan cannot use (e.g. GPT-6.1 Terra needs Pro).
+The adapter reads the catalog page's own per-model minimum plan and drops
+anything above `providers.commandcode.plan` (values `GO`, `GOAT`, `PRO`, `MAX`,
+or `all` to disable the filter for pay-as-you-go keys). Unset = no filter. A
+model with no plan data is dropped and reported rather than assumed available.
 
 OpenRouter needs no scraping: its public models endpoint carries models **and**
 prices. `:batch` variants are dropped inside the adapter (Batch API, not chat),

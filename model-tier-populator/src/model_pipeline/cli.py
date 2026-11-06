@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+from collections import Counter
+from urllib.parse import urlparse
 
 from model_pipeline.config import Config, load_config, parse_as_of
 from model_pipeline.http import HttpClient, ScrapeRecorder
@@ -21,6 +22,10 @@ from model_pipeline.http import HttpClient, ScrapeRecorder
 _AS_OF_HELP = (
     "evaluate time-of-day prices at this ISO 8601 timestamp (must carry a "
     "timezone, e.g. 2026-10-22T18:00Z); overrides pricing.as_of for this run"
+)
+_NO_CACHE_HELP = (
+    "bypass on-disk snapshot cache (output/aa_snapshot.json) and force a "
+    "fresh fetch from the Artificial Analysis API"
 )
 
 
@@ -65,6 +70,35 @@ def _print_limit_warnings(flagged: dict[str, list[str]]) -> None:
             print(f"    … and {len(items) - 10} more (see the ranking report)")
 
 
+def _print_plan_warnings(adapter) -> None:
+    """Report models dropped because the subscription plan does not serve them.
+
+    Adapters that gate on a plan expose ``plan``, ``plan_excluded`` and
+    ``plan_unverified``; other adapters expose none of it and print nothing.
+    """
+    plan = getattr(adapter, "plan", "")
+    excluded = getattr(adapter, "plan_excluded", [])
+    unverified = getattr(adapter, "plan_unverified", [])
+    if excluded:
+        print(
+            f"  warning: {len(excluded)} model(s) need a higher {adapter.name} "
+            f"plan than {plan}:"
+        )
+        for model_id, required in excluded[:10]:
+            print(f"    {model_id} (needs {required})")
+        if len(excluded) > 10:
+            print(f"    … and {len(excluded) - 10} more")
+    if unverified:
+        print(
+            f"  warning: {len(unverified)} {adapter.name} model(s) have no plan data "
+            "and were dropped (never assumed available):"
+        )
+        for model_id in unverified[:10]:
+            print(f"    {model_id}")
+        if len(unverified) > 10:
+            print(f"    … and {len(unverified) - 10} more")
+
+
 # --------------------------------------------------------------------------- #
 # fetch
 # --------------------------------------------------------------------------- #
@@ -91,6 +125,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     for adapter in adapters:
         fetched = adapter.fetch_all()
         print(f"  {adapter.name}: {len(fetched)} servable models")
+        _print_plan_warnings(adapter)
         models.extend(fetched)
 
     print("  fetching token limits from models.dev...")
@@ -101,8 +136,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         print(f"  models.dev: {resolver.model_count} models")
     _print_limit_warnings(apply_limits(models, resolver, models_dev_ids(cfg)))
 
+    no_cache = bool(getattr(args, "no_cache", False) or getattr(args, "refresh_aa", False))
     print("  fetching Artificial Analysis canonical models...")
-    canonical = AaClient(cfg, http, recorder).canonical_models()
+    canonical = AaClient(cfg, http, recorder).canonical_models(use_cache=not no_cache)
     print(f"  canonical models: {len(canonical)}")
 
     print("  de-duplicating (exact match, then Jev for the rest)...")
@@ -236,6 +272,121 @@ def cmd_refresh(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 # populate
 # --------------------------------------------------------------------------- #
+def _target_host(url: str) -> str:
+    return urlparse(url).netloc or url
+
+
+def _print_target(cfg: Config) -> None:
+    url = cfg.litellm.base_url
+    print(f"LiteLLM target: {url} ({_target_host(url)})")
+    print(f"  auth: Bearer from env {cfg.litellm.master_key_env}")
+
+
+def _print_server_details(details: dict, models: list[dict]) -> None:
+    """Show what the target is before anything is written.
+
+    Only the env-var name is printed for auth — never the key value.
+    """
+    from model_pipeline.models import ID_PREFIX
+
+    status = details.get("status") or "unknown"
+    db = details.get("db") or "unknown"
+    print(f"  health: {status} (db: {db})")
+    print(f"  version: {details.get('version') or 'unknown'}")
+
+    managed = [
+        m
+        for m in models
+        if str((m.get("model_info") or {}).get("id", "")).startswith(ID_PREFIX)
+    ]
+    groups = Counter(
+        (m.get("model_info") or {}).get("model_group")
+        or m.get("model_name")
+        or "unknown"
+        for m in managed
+    )
+    group_text = ", ".join(f"{name}: {count}" for name, count in sorted(groups.items()))
+    suffix = f" ({group_text})" if group_text else ""
+    print(f"  models: {len(models)} total, {len(managed)} pipeline-managed{suffix}")
+
+
+def _print_changes(added, updated, deleted) -> None:
+    for key in added:
+        print(f"  + {key}")
+    for key in updated:
+        print(f"  ~ {key}")
+    for key in deleted:
+        print(f"  - {key}")
+
+
+def _print_plan(plan) -> None:
+    print(f"  pending changes: {plan.summary()}")
+    _print_changes(plan.report.added, plan.report.updated, plan.report.deleted)
+
+
+def _ask_apply(target: str, ask=input) -> bool:
+    """One confirmation, defaulting to No on anything but y/yes."""
+    try:
+        answer = ask(f"\nApply these changes to {target}? [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _cmd_populate_interactive(
+    cfg: Config,
+    payload: dict,
+    client,
+    ask=input,
+    isatty=None,
+    dry_run: bool = False,
+) -> int:
+    from model_pipeline.populate.sync import apply_plan, build_plan
+
+    _print_target(cfg)
+    try:
+        details = client.server_details()
+    except Exception as exc:  # noqa: BLE001 - report the target and the reason
+        print(
+            f"error: cannot read LiteLLM server at {cfg.litellm.base_url}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        models = client.list_models()
+    except Exception as exc:  # noqa: BLE001 - the master key may be rejected
+        print(
+            f"error: cannot list LiteLLM models at {cfg.litellm.base_url}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    _print_server_details(details, models)
+    plan = build_plan(payload, models)
+    _print_plan(plan)
+
+    if dry_run:
+        print("  dry-run: no changes applied.")
+        return 0
+
+    interactive = sys.stdin.isatty() if isatty is None else isatty
+    if not interactive:
+        print("  stdin is not a terminal; preview only, LiteLLM unchanged.")
+        return 0
+
+    if not _ask_apply(_target_host(cfg.litellm.base_url), ask=ask):
+        print("populate declined: LiteLLM unchanged")
+        return 0
+
+    report = apply_plan(client, plan)
+    print(f"populate applied: {report.summary()}")
+    _print_changes(report.added, report.updated, report.deleted)
+    for err in report.errors:
+        print(f"  ! {err}", file=sys.stderr)
+    return 1 if report.errors else 0
+
+
 def cmd_populate(args: argparse.Namespace) -> int:
     import json
 
@@ -249,17 +400,32 @@ def cmd_populate(args: argparse.Namespace) -> int:
     payload = json.loads(output_path.read_text(encoding="utf-8"))
 
     http = HttpClient()
-    report = sync(payload, cfg, http, apply=not args.dry_run)
-    http.close()
+    try:
+        if getattr(args, "interactive", False):
+            from model_pipeline.populate.litellm_client import LiteLLMClient
+
+            try:
+                client = LiteLLMClient(cfg, http)
+            except RuntimeError as exc:
+                print(
+                    f"error: cannot populate {cfg.litellm.base_url}: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+            return _cmd_populate_interactive(
+                cfg,
+                payload,
+                client,
+                dry_run=bool(getattr(args, "dry_run", False)),
+            )
+
+        report = sync(payload, cfg, http, apply=not args.dry_run)
+    finally:
+        http.close()
 
     verb = "would apply" if args.dry_run else "applied"
     print(f"populate {verb}: {report.summary()}")
-    for key in report.added:
-        print(f"  + {key}")
-    for key in report.updated:
-        print(f"  ~ {key}")
-    for key in report.deleted:
-        print(f"  - {key}")
+    _print_changes(report.added, report.updated, report.deleted)
     for err in report.errors:
         print(f"  ! {err}", file=sys.stderr)
     return 1 if report.errors else 0
@@ -306,9 +472,28 @@ def build_parser() -> argparse.ArgumentParser:
     refresh.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
     populate = sub.add_parser("populate", help="tier-output.json -> LiteLLM")
     populate.add_argument("--dry-run", action="store_true", help="show the diff without applying")
+    populate.add_argument(
+        "--interactive",
+        action="store_true",
+        help="show the target and diff, then confirm once before applying",
+    )
     run = sub.add_parser("run", help="fetch -> score -> populate in one go (no review gates)")
     run.add_argument("--dry-run", action="store_true", help="score for real, but preview the populate diff")
     run.add_argument("--as-of", dest="as_of", default=None, help=_AS_OF_HELP)
+
+    for p in (fetch, refresh, run):
+        p.add_argument(
+            "--no-cache",
+            action="store_true",
+            default=False,
+            help=_NO_CACHE_HELP,
+        )
+        p.add_argument(
+            "--refresh-aa",
+            action="store_true",
+            default=False,
+            help=_NO_CACHE_HELP,
+        )
     return parser
 
 
@@ -316,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - best-effort console encoding
         pass
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
