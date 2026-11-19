@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -30,12 +31,51 @@ def safe_id_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._:-]+", "-", value).strip("-") or "model"
 
 
-def deployment_id(model_group: str, provider: str, model_id: str) -> str:
-    """Stable, URL-safe identity for one (tier, provider, model) deployment."""
-    return (
+def deployment_id(
+    model_group: str,
+    provider: str,
+    model_id: str,
+    credential_slot: int | None = None,
+) -> str:
+    """Stable, URL-safe identity for one (tier, provider, model) deployment.
+
+    Slot 1 (and ``None``) keeps the historical id so existing single-key
+    deployments are not recreated. Additional keys append ``key-<n>`` so each
+    credential has its own row while the first key keeps its spend history.
+    """
+    base = (
         f"{ID_PREFIX}{safe_id_part(model_group)}::{safe_id_part(provider)}"
-        f"::{safe_id_part(model_id)}"
     )
+    if credential_slot is not None and credential_slot > 1:
+        return f"{base}::key-{credential_slot}::{safe_id_part(model_id)}"
+    return f"{base}::{safe_id_part(model_id)}"
+
+
+def fingerprint_key(value: str) -> str:
+    """Non-secret, stable identity for one API key (SHA-256 prefix)."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class Credential:
+    """One provider API key and the slot it occupies in the key list.
+
+    ``value`` is deliberately excluded from repr: it is the raw secret and must
+    never appear in logs, artifacts, or exception messages. ``raw`` selects how
+    the payload references it: ``True`` means "resolve to ``value`` when
+    populating"; ``False`` means "send ``os.environ/<env_name>`` and let LiteLLM
+    resolve it" (legacy single-key behavior).
+    """
+
+    slot: int
+    value: str = field(repr=False)
+    env_name: str = ""
+    raw: bool = True
+    fingerprint: str = field(default="")
+
+    def __post_init__(self) -> None:
+        if not self.fingerprint:
+            object.__setattr__(self, "fingerprint", fingerprint_key(self.value))
 
 
 @dataclass
@@ -85,6 +125,11 @@ class RawModel:
     output_tokens: Optional[int] = None
     limits_source: str = ""  # e.g. "models.dev:commandcode" / "models.dev-fallback:xiaomi"
     limits_flags: list[str] = field(default_factory=list)  # "unresolved", "output_equals_context", ...
+    # Capability fields ready to merge into LiteLLM's model_info. Empty means
+    # the provider's models.dev entry did not declare them (never invented).
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    capabilities_source: str = ""
+    capabilities_flags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -152,6 +197,13 @@ class Deployment:
     output_tokens: Optional[int] = None
     limits_source: str = ""
     limits_flags: list[str] = field(default_factory=list)
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    capabilities_source: str = ""
+    capabilities_flags: list[str] = field(default_factory=list)
+    # Credential identity for multi-key providers. Slot 1 keeps the legacy id.
+    credential_slot: int = 1
+    api_key_fingerprint: str = ""
+    credential_count: int = 1
     nmb: float = 0.0
     tier: str = ""
     model_group: str = ""
@@ -167,7 +219,9 @@ class Deployment:
     # Stable identity used for diff-based population.
     @property
     def deployment_id(self) -> str:
-        return deployment_id(self.model_group, self.provider, self.model_id)
+        return deployment_id(
+            self.model_group, self.provider, self.model_id, self.credential_slot
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -184,6 +238,11 @@ class Deployment:
             "output_tokens": self.output_tokens,
             "limits_source": self.limits_source,
             "limits_flags": self.limits_flags,
+            "capabilities_source": self.capabilities_source,
+            "capabilities_flags": self.capabilities_flags,
+            "credential_slot": self.credential_slot,
+            "api_key_fingerprint": self.api_key_fingerprint,
+            "credential_count": self.credential_count,
             "intelligence": self.intelligence,
             "latency_seconds": self.latency_seconds,
             "cost_per_task": self.cost_per_task,

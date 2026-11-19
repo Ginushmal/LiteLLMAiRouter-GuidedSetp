@@ -8,8 +8,13 @@ task, capturing:
 
 Three strategies, picked by data availability:
   A. AA Pro per-token re-price   (needs AA per-task token counts)
-  B. AA free effective-token     (default: backs out token counts from AA cost)
+  B. AA free blended-ratio       (default: re-prices AA's cost by the ratio of
+                                  the provider's blended price to AA's)
   C. Fixed task profile          (fallback when AA has nothing for the model)
+
+Strategy B never derives token counts: AA's published cost_per_task already
+embeds its own measured cache savings, so discounting again would double-count.
+Identical provider and AA prices therefore reproduce AA's cost exactly.
 
 Missing provider price components fall back to AA's price for that component,
 and the artifact records which values are provider vs fallback.
@@ -117,6 +122,28 @@ def _split_input(total_input: float, cache_hit_rate: float) -> tuple[float, floa
     return total_input - cached, cached
 
 
+def blended_price(
+    input_price: Optional[float],
+    output_price: Optional[float],
+    cache_read_price: Optional[float],
+    tp: TaskProfile,
+) -> float:
+    """Per-token weighted price of one workload shape (dollars/1M tokens).
+
+    Fresh input is billed at the input price, `cache_hit_rate` of the input at
+    the cache-read price, and output at the output price, with `input_output_ratio`
+    fixing the input:output split. A missing cache-read price falls back to the
+    input price (mirroring ``_cost_of``). The absolute token volumes cancel in a
+    ratio of two blends, so this is a pure price function.
+    """
+    p_in = input_price or 0.0
+    p_out = output_price or 0.0
+    p_cache_read = cache_read_price if cache_read_price is not None else p_in
+    h = tp.cache_hit_rate or 0.0
+    ratio = tp.input_output_ratio or 4.0
+    return (1.0 - h) * p_in + h * p_cache_read + p_out / ratio
+
+
 def _strategy_a(
     prices: EffectivePrices, canonical: CanonicalModel, tp: TaskProfile
 ) -> CostResult:
@@ -140,23 +167,35 @@ def _strategy_a(
 def _strategy_b(
     prices: EffectivePrices, canonical: CanonicalModel, tp: TaskProfile
 ) -> CostResult:
-    p_in_aa = (canonical.aa_input or 0.0) / _MILLION
-    p_out_aa = (canonical.aa_output or 0.0) / _MILLION
-    ratio = tp.input_output_ratio or 4.0
-    denominator = p_in_aa + p_out_aa / ratio
-    if denominator <= 0:
+    """Re-price AA's cost_per_task at the provider's rates, ratio form.
+
+    AA's published cost already embeds its own measured cache savings, so a
+    second cache discount must not be applied. Cost is AA's cost scaled by the
+    ratio of the provider's blended price to AA's blended price, with the same
+    ``(cache_hit_rate, input_output_ratio)`` on both sides. Identical prices
+    therefore reproduce AA's cost exactly, for any configuration.
+    """
+    aa_blend = blended_price(
+        canonical.aa_input, canonical.aa_output, canonical.aa_cache_read, tp
+    )
+    if aa_blend <= 0:
         return _strategy_c(prices, tp)
-    total_input = (canonical.aa_cost_per_task or 0.0) / denominator
-    total_output = total_input / ratio
-    fresh, cached = _split_input(total_input, tp.cache_hit_rate)
-    tokens = {"input": fresh, "cached": cached, "output": total_output}
+    provider_blend = blended_price(
+        prices.input, prices.output, prices.cache_read, tp
+    )
+    # Form the ratio first: when provider and AA blends are bit-identical the
+    # ratio is exactly 1.0, so the invariant (identical prices => exactly AA's
+    # cost) holds without any floating-point slack.
+    cost = (canonical.aa_cost_per_task or 0.0) * (provider_blend / aa_blend)
     return CostResult(
-        cost_per_task=_cost_of(prices, tp, tokens),
+        cost_per_task=cost,
         method="aa_free",
         prices=prices,
         notes=[
-            "AA free-tier cost_per_task decomposed into effective tokens "
-            f"(input:output {ratio:g}:1), re-priced with cache_hit_rate {tp.cache_hit_rate:g}"
+            "AA free-tier cost_per_task re-priced by the provider/AA blended-price "
+            f"ratio (cache_hit_rate {tp.cache_hit_rate:g}, "
+            f"input:output {tp.input_output_ratio:g}:1); AA cost already includes "
+            "its measured cache savings, so no second cache discount is applied"
         ],
     )
 

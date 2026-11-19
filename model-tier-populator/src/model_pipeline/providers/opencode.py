@@ -74,13 +74,11 @@ class OpenCodeAdapter(ProviderAdapter):
         return self._docs_html
 
     def fetch_models(self) -> list[RawModel]:
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        resp = self.fetch_with_key_fallback(self.pcfg.models_url)
         try:
-            resp = self.http.get(self.pcfg.models_url, headers=headers)
-            resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            self._record(self.pcfg.models_url, "GET", error=str(exc))
+            self._record(self.pcfg.models_url, "GET", resp=resp, error=str(exc))
             raise
 
         endpoints = parse_opencode_endpoints(self._docs())
@@ -118,7 +116,12 @@ class OpenCodeAdapter(ProviderAdapter):
         return pricing
 
     def to_litellm_deployment(
-        self, model: RawModel, pricing: ResolvedPricing, model_group: str, order: int
+        self,
+        model: RawModel,
+        pricing: ResolvedPricing,
+        model_group: str,
+        order: int,
+        credential=None,
     ) -> dict:
         if model.endpoint_type == ENDPOINT_MESSAGES:
             prefix = "anthropic/"
@@ -127,7 +130,13 @@ class OpenCodeAdapter(ProviderAdapter):
             prefix = "openai/"
             api_base = self.pcfg.litellm["chat_completions_api_base"]
         return self._assemble(
-            model, pricing, model_group, order, f"{prefix}{model.model_id}", api_base
+            model,
+            pricing,
+            model_group,
+            order,
+            f"{prefix}{model.model_id}",
+            api_base,
+            credential,
         )
 
 

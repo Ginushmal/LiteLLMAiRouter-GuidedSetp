@@ -1,0 +1,17 @@
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    container_name: lab-litellm
+    ports: ["4001:4000"]
+    volumes: ["./config.yaml:/app/config.yaml"]
+    environment:
+      LITELLM_MASTER_KEY: sk-lab-master
+      LITELLM_SALT_KEY: sk-lab-salt
+      DATABASE_URL: postgresql://litellm:litellm@lab-db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    extra_hosts: ["host.containers.internal:host-gateway"]
+networks:
+  default:
+    name: lab-net
+    external: true

@@ -58,7 +58,7 @@ services:
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set it in .env}
       DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm
       STORE_MODEL_IN_DB: "True"               # <- enables Admin UI model management + hybrid mode
-      # COMMANDCODE_API_KEY: ...              # added in Step 6
+      # JEV_API_KEY: ...                      # added in Step 6 (router classifier)
       # LITELLM_MODEL_COST_MAP_URL: ...       # added in Step 8
     depends_on:
       db:
@@ -168,23 +168,62 @@ general_settings:
   forward_client_headers_to_llm_api: true     # forward client x-* headers upstream
 ```
 
-The last line is what lets a client send OpenRouter's `x-session-id` header. OpenRouter uses that id as its **sticky-routing key**: it keeps a conversation on the same upstream provider, so the provider's prompt cache stays warm (verified: 1304-token prompt, 0 cached tokens on turn 1, 1280 on turn 2 through the gateway). The body field `session_id` works too, and OpenRouter prefers it over the header. LiteLLM strips `authorization`, `x-api-key` and `x-litellm-api-key` before forwarding, so enabling this does not leak client credentials — but it does forward *every* `x-*` header the client sends.
+The last line is what lets a client send OpenRouter's `x-session-id` header. OpenRouter uses that id as its **sticky-routing key**: it keeps a conversation on the same upstream provider, so the provider's prompt cache stays warm (verified: 1304-token prompt, 0 cached tokens on turn 1, 1280 on turn 2 through the gateway). The body field `session_id` works too, and OpenRouter prefers it over the header. LiteLLM strips `authorization`, `x-api-key` and `x-litellm-api-key` before forwarding, so enabling this does not leak client credentials - but it does forward *every* `x-*` header the client sends.
+
+### Model metadata (media, tools, reasoning)
+
+Add the model's capabilities to `model_info`. Clients read these from `/model/info` and use them to decide what to offer; the gateway itself does not gate images on the flag.
+
+```yaml
+    model_info:
+      mode: chat
+      supports_vision: true
+      supports_pdf_input: true
+      supports_audio_input: false
+      supports_video_input: false
+      supports_function_calling: true
+      supports_response_schema: true
+      modalities:
+        input: [text, image, pdf]
+        output: [text]
+      supports_reasoning: true
+      reasoning_effort_levels: [low, high, max]
+      supports_low_reasoning_effort: true
+      supports_high_reasoning_effort: true
+      supports_max_reasoning_effort: true
+```
+
+| Field group | What it advertises |
+|-------------|--------------------|
+| `supports_vision` / `supports_pdf_input` / `supports_audio_input` / `supports_video_input` | Media input |
+| `supports_audio_output` | Media output (audio) |
+| `modalities.input` / `output` | Exact modality list (preferred over the individual flags) |
+| `supports_function_calling` / `supports_response_schema` | Tools / structured output |
+| `supports_reasoning` | Reasoning capability |
+| `reasoning_effort_levels` + `supports_*_reasoning_effort` | Accepted effort levels |
+
+**Admin UI:** Models + Endpoints → **Add Model** → **Advanced Settings** → **Model Info** (JSON). For an existing model: click the model ID → **Edit Settings** → **Model Info** → **Save Changes**. The form has no dedicated vision/PDF/reasoning dropdowns; this JSON field is the control.
+
+> For an `anthropic/...` deployment, `supports_reasoning: true` is required for `reasoning_effort` to be forwarded. Without it, `drop_params: true` silently drops the field and the upstream receives no thinking budget.
 
 ---
 
-## Step 6 — Wire the provider key into Compose
+## Step 6 — Wire secrets into Compose
 
-`api_key: os.environ/COMMANDCODE_API_KEY` in `config.yaml` needs that variable inside the container. Add it to the `litellm` service environment, and to `.env`:
+The gateway container needs only its **own** settings: master key, salt key, the Jev classifier key, and the cost map URL. Provider API keys are **not** injected — `model-pipeline` publishes each deployment with its provider key as a raw value, and LiteLLM stores it encrypted with `LITELLM_SALT_KEY`.
 
 ```yaml
     environment:
       # ...
-      COMMANDCODE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
+      TYPESAFE_API_KEY: ${JEV_API_KEY:?set it in .env}
+      TYPESAFE_API_BASE: https://api.commandcode.ai/provider   # URL becomes {base}/v1/systemone
 ```
 
 ```env
-COMMANDCODE_API_KEY=sk-<your-commandcode-key>
+JEV_API_KEY=sk-<one-commandcode-key>
 ```
+
+> If you added a model **by hand** with `api_key: os.environ/SOME_VAR` (Step 5), that variable must still be present in the `litellm` service environment. Deployments published by the pipeline do not need it.
 
 > Editing Compose/.env is a **container-spec change**, so apply it with `--force-recreate` (Step 7), not `restart`.
 
@@ -255,7 +294,7 @@ Send a prompt in the **Playground**, then open **Usage / Logs** and check the re
 
 ## Step 10 — Failover with `order`
 
-`order` lives on each deployment in `litellm_params`. Lower = tried first. On failure at an order, after `num_retries` are exhausted, LiteLLM escalates to the next order — it does **not** try another deployment that shares the same order.
+`order` lives on each deployment in `litellm_params`. Lower = tried first. On failure at an order, after `num_retries` are exhausted, LiteLLM escalates to the next order. By default it does **not** automatically try another deployment that shares the same order; same-order sibling failover needs cooldown + retry, covered in the next subsection.
 
 ```yaml
 model_list:
@@ -269,7 +308,7 @@ model_list:
       order: 2        # tried after the order-1 attempts fail (not "both")
 ```
 
-> **Gotcha:** with two deployments in order 1 and a deterministic strategy like `cost-based-routing`, a failure re-picks the *same* deployment on every retry and then escalates to order 2 — the order-1 sibling is skipped. Same-tier failover needs `enable_weighted_failover` (which requires `simple-shuffle`).
+> **Gotcha:** with two deployments in order 1, the default `allowed_fails: 5` keeps a failing key healthy through several retries. `cost-based-routing` then re-picks the *same* deployment and escalates to order 2 — the order-1 sibling is skipped. To make the sibling get tried, set per-deployment `allowed_fails: 0` (next subsection). `enable_weighted_failover` is a separate option but only works with `simple-shuffle`.
 
 ### Auto-router tier order fallbacks
 
@@ -308,6 +347,78 @@ To verify after a LiteLLM upgrade, send a short request through `smart-router` a
 
 > For a documented fallback to a different model group, use the standard `router_settings.fallbacks` form shown in LiteLLM's [Fallbacks documentation](https://docs.litellm.ai/docs/proxy/reliability). The `_target_order` dict form above is a tested, version-sensitive workaround, not an official documented interface.
 
+### Same-order latency pool failover
+
+Use this when several API keys serve the **same model** and you want the fastest healthy key, with a failed key replaced by another key of the same model before moving to a different model.
+
+Every key shares the same `order`. Per-deployment `allowed_fails: 0` benches a failed key on the first counted failure; `num_retries` re-picks a healthy sibling; `cooldown_time` controls how long the failed key stays out.
+
+```yaml
+model_list:
+  - model_name: flash-tier
+    litellm_params:
+      model: openai/deepseek/deepseek-v4.1-flash
+      api_base: https://api.commandcode.ai/provider/v1
+      api_key: os.environ/COMMANDCODE_API_KEY_1
+      order: 2
+      num_retries: 4
+    model_info:
+      allowed_fails: 0
+      cooldown_time: 300
+
+  - model_name: flash-tier
+    litellm_params:
+      model: openai/deepseek/deepseek-v4.1-flash
+      api_base: https://api.commandcode.ai/provider/v1
+      api_key: os.environ/COMMANDCODE_API_KEY_2
+      order: 2
+      num_retries: 4
+    model_info:
+      allowed_fails: 0
+      cooldown_time: 300
+
+router_settings:
+  routing_strategy: latency-based-routing
+  routing_strategy_args:
+    lowest_latency_buffer: 0      # 0 = strict lowest latency
+  num_retries: 4
+  retry_policy:
+    DefaultRetries: 4             # covers 402
+    RateLimitErrorRetries: 4
+    InternalServerErrorRetries: 4
+    AuthenticationErrorRetries: 4
+    BadRequestErrorRetries: 1
+    NotFoundErrorRetries: 0
+```
+
+| Event | What happens |
+|-------|--------------|
+| Normal request | Latency routing picks the fastest healthy key at order 2 |
+| Key fails with `500`/`429` | Key is benched; the retry picks the next-fastest sibling |
+| Key fails with `402` | Benched; with `DefaultRetries` the same request retries a sibling; without it, the next request does |
+| Every order-2 key benched | Router escalates to order 3 (the next model) |
+| Later request | Benched key is skipped until `cooldown_time` expires |
+
+Sizing:
+
+- `num_retries` is the retry budget for the **current order**, after the initial attempt. Set it to at least `keys - 1` to try every sibling.
+- `cooldown_time` must exceed `keys × attempts_per_key × timeout`. With `allowed_fails: 0` and a 500 policy of 1, `attempts_per_key` is 2. A 20s timeout and a 30-minute cooldown cover roughly 45 keys.
+- `enable_weighted_failover` is not needed for this path; it only works with `simple-shuffle`.
+
+**Admin UI:** for each key, **Models + Endpoints → Add Model**, use the same public model name, then **Advanced Settings → LiteLLM Params**:
+
+```json
+{"order": 2, "num_retries": 4}
+```
+
+and **Advanced Settings → Model Info**:
+
+```json
+{"allowed_fails": 0, "cooldown_time": 300}
+```
+
+Add the model. Repeat for the next key. For an existing deployment: click the model ID → **Edit Settings** → edit the same two JSON fields → **Save Changes**. Apply the `router_settings` change with `restart litellm`.
+
 ## Step 11 — Per-model strategies with `routing_groups`
 
 Give each group its own strategy. `group_name` also becomes a **callable model** (it shows up in the UI picker).
@@ -330,14 +441,18 @@ router_settings:
         lowest_latency_buffer: 0.5
 ```
 
+> The global `allowed_fails: 5` is the default for deployments that do not set their own. The same-order latency pool sets `model_info.allowed_fails: 0` per deployment, which overrides the global value for those keys.
+
 Worked example (`flash-tier`):
 
 1. Order 1 has two deployments → `cost-based-routing` picks the cheaper one.
 2. If it fails, retries re-run cost-based → the **same** (cheaper) deployment is
-   re-picked; it is **not** swapped for the other order-1 deployment.
+   re-picked while it remains healthy (default `allowed_fails: 5`).
 3. After retries are exhausted, escalate to order 2 (`deepseek-v4-flash`).
-4. The order-1 sibling takes over only after the failing deployment is cooled
-   down (> `allowed_fails` failures) on subsequent requests.
+4. The order-1 sibling takes over on later requests once the failing deployment
+   exceeds `allowed_fails`. With per-deployment `allowed_fails: 0`, the key is
+   benched on the first failure and the retry picks the sibling in the same
+   request.
 
 For a strict "cheapest → next → backup" chain, give each deployment its own
 `order` (1/2/3, ranked by cost).
@@ -458,7 +573,16 @@ On the Create Key form, set user, team, models, budget, duration. Notes:
 `restart` doesn't inject new env vars. Use `up -d --force-recreate litellm`.
 
 ### `smart-router` does not try later tier orders
-Direct tier calls may use automatic `order` failover, while the auto-router path needs the tier-keyed fallback entries in `config.yaml`. The `_target_order` form is undocumented; check it again after LiteLLM upgrades.
+Direct tier calls may use automatic `order` failover, while the auto-router path needs the tier-keyed fallback entries in `config.yaml`. The `_target_order` form is undocumented; check it again after LiteLLM upgrades. LiteLLM 1.108's source resolves the order group from the pre-routing selection, which likely fixes this; retest before removing the entries.
+
+### Same-order sibling is not tried
+The failed key was not benched. Set per-deployment `allowed_fails: 0` in **Model Info**, keep all keys at the same `order`, and set `num_retries` to at least `keys - 1`. For `402`, add `retry_policy.DefaultRetries`; otherwise the first request fails and only later requests avoid the key. See Step 10, “Same-order latency pool failover.”
+
+### Reasoning effort does nothing on an Anthropic deployment
+`supports_reasoning` is missing. Set `model_info.supports_reasoning: true` and the effort levels; otherwise `drop_params` silently removes `reasoning_effort` and no thinking budget reaches the provider.
+
+### Client shows a model as text-only
+`model_info.supports_vision` / `modalities.input` is missing. Clients read `/model/info`; add the media flags or the exact `modalities` list in **Model Info**. On LiteLLM 1.108 the gateway forwards images regardless, so the client is the gate.
 
 ### Virtual key not working
 1. Not blocked / not expired (Virtual Keys page).
@@ -494,6 +618,9 @@ podman compose -f docker-compose.yml down && `
 | Task | Where |
 |------|-------|
 | Models | Models + Endpoints |
+| Add a model / key | Models + Endpoints → Add Model |
+| Edit model metadata, `order`, retries | Models + Endpoints → click the model ID → Edit Settings |
+| Reusable provider keys | Models + Endpoints → LLM Credentials |
 | Teams | Teams |
 | Users | Internal Users (+ Invite User) |
 | Personal / team keys | Virtual Keys |

@@ -1,9 +1,15 @@
 """CommandCode (api.commandcode.ai/provider/v1) adapter.
 
 Models come from the Provider API. Prices come from the HTML catalog at
-commandcode.ai/models, whose rows look like:
+commandcode.ai/models, whose rows currently look like:
 
-    Model | Context | Intelligence | Input | Output | Cache read | Cache write | Caps
+    Model | Context | Input | Output | Cache read | Cache write | Caps
+
+The column set is not stable (an Intelligence column sat between Context and
+Input until it was removed in November 2026), so columns are located by the
+table's header text, never by position. A table that stops publishing any of
+the Input, Output, Cache read, or Cache write headers aborts the fetch instead
+of parsing shifted prices.
 
 Price cells carry plan markers ("$0.10 + 1") and, for discounted models, a
 strikethrough list price followed by the effective price ("$0.80 $0.14").
@@ -48,6 +54,24 @@ _ANCHOR_RE = re.compile(r"<a[^>]*>(.*?)</a>", re.S)
 _HREF_RE = re.compile(r'href="/models/([a-z0-9\-]+)"')
 _DISCOUNT_SUFFIX_RE = re.compile(r"\s*-\d+%\s*$")
 
+# Header text -> pricing field. Matched on lowercased alphanumeric words, so a
+# sort glyph or extra decoration around the label does not matter.
+_HEADER_FIELDS = {
+    "model": "model",
+    "input": "input",
+    "output": "output",
+    "cache read": "cache_read",
+    "cache write": "cache_write",
+}
+_REQUIRED_PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
+_FIELD_LABELS = {
+    "input": "Input",
+    "output": "Output",
+    "cache_read": "Cache read",
+    "cache_write": "Cache write",
+}
+_HEADER_NOISE_RE = re.compile(r"[^a-z0-9]+")
+
 
 class CommandCodeAdapter(ProviderAdapter):
     name = "commandcode"
@@ -66,9 +90,6 @@ class CommandCodeAdapter(ProviderAdapter):
         self._min_plans: dict[str, str] = {}
         self.plan_excluded: list[tuple[str, str]] = []
         self.plan_unverified: list[str] = []
-
-    def _auth_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.api_key}"}
 
     def available(self, model: RawModel) -> bool:
         """Servable = protocol supported AND the plan includes the model.
@@ -94,12 +115,11 @@ class CommandCodeAdapter(ProviderAdapter):
         return True
 
     def fetch_models(self) -> list[RawModel]:
+        resp = self.fetch_with_key_fallback(self.pcfg.models_url)
         try:
-            resp = self.http.get(self.pcfg.models_url, headers=self._auth_headers())
-            resp.raise_for_status()
             data = resp.json()
         except Exception as exc:  # record then propagate
-            self._record(self.pcfg.models_url, "GET", error=str(exc))
+            self._record(self.pcfg.models_url, "GET", resp=resp, error=str(exc))
             raise
         models: list[RawModel] = []
         for m in data.get("data", []):
@@ -125,7 +145,13 @@ class CommandCodeAdapter(ProviderAdapter):
         except Exception as exc:
             self._record(self.pcfg.pricing_url, "GET", error=str(exc))
             raise
-        pricing = parse_commandcode_pricing(resp.text)
+        try:
+            pricing = parse_commandcode_pricing(resp.text)
+        except Exception as exc:
+            # Record then propagate: a silent partial parse would stamp wrong
+            # prices as provider data.
+            self._record(self.pcfg.pricing_url, "GET", resp=resp, error=str(exc))
+            raise
         if self.plan:
             # Same page, same fetch: fail loudly if the page stops publishing
             # plan data, because silence would let premium models through.
@@ -138,7 +164,12 @@ class CommandCodeAdapter(ProviderAdapter):
         return pricing
 
     def to_litellm_deployment(
-        self, model: RawModel, pricing: ResolvedPricing, model_group: str, order: int
+        self,
+        model: RawModel,
+        pricing: ResolvedPricing,
+        model_group: str,
+        order: int,
+        credential=None,
     ) -> dict:
         is_messages = model.endpoint_type == ENDPOINT_MESSAGES
         prefix = "anthropic/" if is_messages else "openai/"
@@ -148,7 +179,13 @@ class CommandCodeAdapter(ProviderAdapter):
             else self.pcfg.litellm["openai_api_base"]
         )
         return self._assemble(
-            model, pricing, model_group, order, f"{prefix}{model.model_id}", api_base
+            model,
+            pricing,
+            model_group,
+            order,
+            f"{prefix}{model.model_id}",
+            api_base,
+            credential,
         )
 
 
@@ -157,38 +194,83 @@ def parse_commandcode_pricing(html: str) -> dict[str, ResolvedPricing]:
     table_match = _TABLE_RE.search(html or "")
     if not table_match:
         return result
-    for row_match in _ROW_RE.finditer(table_match.group(0)):
-        cells = _CELL_RE.findall(row_match.group(0))
-        if len(cells) < 7:
+    rows = _ROW_RE.findall(table_match.group(0))
+    if not rows:
+        raise ValueError("models page pricing table has no rows (schema change?)")
+    # Columns are located by header text, never by position: the page dropped
+    # its Intelligence column in November 2026 and a positional parser silently
+    # shifted every price into the neighbouring field.
+    columns = pricing_column_map(_CELL_RE.findall(rows[0]))
+    last_column = max(columns.values())
+    name_column = columns.get("model", 0)
+
+    for row_html in rows[1:]:
+        cells = _CELL_RE.findall(row_html)
+        if len(cells) <= last_column:
             continue
-        # Name lives in the first anchor; fall back to the raw cell text.
-        anchor = _ANCHOR_RE.search(cells[0])
-        name = clean_text(anchor.group(1) if anchor else cells[0])
+        name_cell = cells[name_column] if name_column < len(cells) else cells[0]
+        # Name lives in the cell's anchor; fall back to the raw cell text.
+        anchor = _ANCHOR_RE.search(name_cell)
+        name = clean_text(anchor.group(1) if anchor else name_cell)
         name = _DISCOUNT_SUFFIX_RE.sub("", name).strip()
-        if not name or name.lower().startswith("model"):
+        if not name:
             continue
 
+        input_cell = clean_text(cells[columns["input"]])
         pricing = ResolvedPricing(
-            input=parse_money(clean_text(cells[3])),
-            output=parse_money(clean_text(cells[4])),
-            cache_read=parse_money(clean_text(cells[5])),
-            cache_write=parse_money(clean_text(cells[6])),
+            input=parse_money(input_cell),
+            output=parse_money(clean_text(cells[columns["output"]])),
+            cache_read=parse_money(clean_text(cells[columns["cache_read"]])),
+            cache_write=parse_money(clean_text(cells[columns["cache_write"]])),
         )
         pricing.provenance = {
             k: "provider"
             for k in ("input", "output", "cache_read", "cache_write")
             if getattr(pricing, k) is not None
         }
-        if "Free" in clean_text(cells[3]):
+        if "Free" in input_cell:
             pricing.normalization.append("free model")
-        if "$" in clean_text(cells[3]) and len(re.findall(r"\$", clean_text(cells[3]))) > 1:
+        if len(re.findall(r"\$", input_cell)) > 1:
             pricing.normalization.append("discounted (effective price used)")
 
         result[normkey(name)] = pricing
-        href = _HREF_RE.search(cells[0])
+        href = _HREF_RE.search(name_cell)
         if href:
             result.setdefault(normkey(href.group(1)), pricing)
     return result
+
+
+def pricing_column_map(header_cells: list[str]) -> dict[str, int]:
+    """Map pricing fields to column indices using the table's header text.
+
+    Header cells carry a sort-marker glyph (``Input ↕``), so only the
+    alphanumeric words are compared. ``model`` is optional (the name column is
+    assumed first when absent, and the anchor lookup still keys the row); all
+    four price columns are required, because a table that stopped publishing
+    one of them would otherwise yield provider-stamped prices that are wrong
+    or missing.
+    """
+    columns: dict[str, int] = {}
+    for index, cell in enumerate(header_cells):
+        field = _HEADER_FIELDS.get(_header_key(cell))
+        if field is not None:
+            columns.setdefault(field, index)
+    missing = [
+        _FIELD_LABELS[field]
+        for field in _REQUIRED_PRICE_FIELDS
+        if field not in columns
+    ]
+    if missing:
+        raise ValueError(
+            "models page pricing table is missing required column(s): "
+            f"{', '.join(missing)} (page schema change?)"
+        )
+    return columns
+
+
+def _header_key(cell_html: str) -> str:
+    """Header cell text as lowercased alphanumeric words (glyphs dropped)."""
+    return _HEADER_NOISE_RE.sub(" ", clean_text(cell_html).lower()).strip()
 
 
 def _string_end(text: str, quote_at: int) -> int:

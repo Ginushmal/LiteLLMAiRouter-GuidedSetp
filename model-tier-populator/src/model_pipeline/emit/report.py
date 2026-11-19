@@ -11,6 +11,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from model_pipeline.capabilities import (
+    FLAG_MODALITIES_MISSING,
+    FLAG_NON_CHAT_OUTPUT,
+    FLAG_REASONING_LEVELS_MISSING,
+)
+from model_pipeline.capabilities import (
+    FLAG_UNRESOLVED as CAPABILITY_UNRESOLVED,
+)
 from model_pipeline.config import Config
 from model_pipeline.limits import (
     FLAG_OUTPUT_EQUALS_CONTEXT,
@@ -42,8 +50,7 @@ def _canon_index(result: ScoreResult) -> dict[str, dict]:
                     "selected": [],
                 }
                 index[row.canonical_slug] = entry
-            if row.cost_per_task < entry["cost"]:
-                entry["cost"] = row.cost_per_task
+            entry["cost"] = min(entry["cost"], row.cost_per_task)
             if tier.name not in entry["eligible"]:
                 entry["eligible"].append(tier.name)
     for tier in result.tiers:
@@ -254,6 +261,28 @@ def build_report(
         lines.append("Every fetched model resolved an output limit.\n")
     for flag, hint in hints.items():
         items = sorted(key for key, flags in result.limit_flags.items() if flag in flags)
+        if not items:
+            continue
+        shown = ", ".join(items[:20]) + (" …" if len(items) > 20 else "")
+        lines.append(f"**{flag}** ({len(items)}) — {hint}: {shown}\n")
+
+    lines.append("\n## Capability metadata\n")
+    lines.append(
+        "Capabilities are resolved from the provider's own models.dev entry. "
+        "Unknown fields are omitted, never invented.\n"
+    )
+    capability_hints = {
+        CAPABILITY_UNRESOLVED: "no provider catalog entry; capabilities omitted",
+        FLAG_MODALITIES_MISSING: "no modality declaration; media flags omitted",
+        FLAG_REASONING_LEVELS_MISSING: "reasoning but no published effort levels",
+        FLAG_NON_CHAT_OUTPUT: "output is not text; excluded from chat tiers",
+    }
+    if not result.capability_flags:
+        lines.append("Every fetched model resolved capability metadata.\n")
+    for flag, hint in capability_hints.items():
+        items = sorted(
+            key for key, flags in result.capability_flags.items() if flag in flags
+        )
         if not items:
             continue
         shown = ", ".join(items[:20]) + (" …" if len(items) > 20 else "")

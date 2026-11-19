@@ -1,5 +1,9 @@
 """Tests for cost-per-task, Pareto, tier assignment, and NMB selection."""
 
+from dataclasses import replace
+
+import pytest
+
 from model_pipeline.config import TaskProfile, load_config
 from model_pipeline.emit.output import build_markdown, build_payload
 from model_pipeline.emit.report import build_report
@@ -220,7 +224,7 @@ class _StubAdapter:
 
     pcfg = _Pcfg()
 
-    def to_litellm_deployment(self, model, pricing, model_group, order):
+    def to_litellm_deployment(self, model, pricing, model_group, order, credential=None):
         return {
             "model_name": model_group,
             "litellm_params": {"api_base": "http://stub"},
@@ -560,3 +564,67 @@ def test_tier_output_markdown_marks_unknown_latency():
 
     markdown = build_markdown(build_payload(result, cfg))
     assert "| unknown |" in markdown
+
+
+# -- aa_free blended-price ratio ------------------------------------------
+def _aa_canonical(cost, pin, pout, pcache=None):
+    return CanonicalModel(
+        slug="m", name="M", intelligence=50,
+        aa_input=pin, aa_output=pout, aa_cache_read=pcache,
+        aa_cost_per_task=cost,
+    )
+
+
+@pytest.mark.parametrize("h,ratio", [(0.0, 4.0), (0.98, 4.0), (0.5, 2.0), (1.0, 8.0)])
+def test_identical_prices_reproduce_aa_cost_exactly(h, ratio):
+    canonical = _aa_canonical(3.6812, 2.0, 10.0, 0.2)
+    tp = replace(TP, cache_hit_rate=h, input_output_ratio=ratio)
+
+    result = cost_per_task(ResolvedPricing(input=2.0, output=10.0, cache_read=0.2), canonical, tp)
+
+    assert result.method == "aa_free"
+    assert result.cost_per_task == 3.6812
+
+
+def test_incident_models_match_aa_cost():
+    # 2026-11-18 artifacts: provider prices equal AA's, but the old token
+    # back-out double-discounted caching ($2.238 / $1.529).
+    kimi = _aa_canonical(3.6812, 2.0, 10.0, 0.2)
+    qwen = _aa_canonical(3.2681, 1.5, 4.5, 0.075)
+
+    k = cost_per_task(ResolvedPricing(input=2.0, output=10.0, cache_read=0.2), kimi, TP)
+    q = cost_per_task(ResolvedPricing(input=1.5, output=4.5, cache_read=0.075), qwen, TP)
+
+    assert k.cost_per_task == pytest.approx(3.6812, abs=1e-9)
+    assert q.cost_per_task == pytest.approx(3.2681, abs=1e-9)
+    assert k.cost_per_task > 2.2382 and q.cost_per_task > 1.5295
+
+
+def test_aa_blend_zero_falls_back_to_task_profile():
+    canonical = _aa_canonical(1.0, 0.0, 0.0)
+    result = cost_per_task(ResolvedPricing(input=1.0, output=2.0), canonical, TP)
+    assert result.method == "task_profile"
+
+
+def test_free_provider_prices_cost_zero():
+    canonical = _aa_canonical(3.0, 2.0, 10.0, 0.2)
+    result = cost_per_task(ResolvedPricing(input=0.0, output=0.0, cache_read=0.0), canonical, TP)
+    assert result.cost_per_task == 0.0
+
+
+def test_cost_scales_with_provider_price_ratio():
+    canonical = _aa_canonical(4.0, 2.0, 2.0, 0.0)  # AA blend = (1-h)*2 + h*2 + 2/4 = 2.5
+    half = cost_per_task(ResolvedPricing(input=1.0, output=1.0, cache_read=0.0), canonical, TP)
+    assert half.cost_per_task == pytest.approx(2.0)  # half the price -> half the cost
+
+
+def test_cheaper_cache_read_saves_more_at_higher_hit_rate():
+    canonical = _aa_canonical(3.0, 2.0, 10.0, 0.2)
+    cheap = ResolvedPricing(input=2.0, output=10.0, cache_read=0.0)
+    pricey = ResolvedPricing(input=2.0, output=10.0, cache_read=2.0)
+
+    low_h = replace(TP, cache_hit_rate=0.1)
+    high_h = replace(TP, cache_hit_rate=0.9)
+    gap_low = cost_per_task(pricey, canonical, low_h).cost_per_task - cost_per_task(cheap, canonical, low_h).cost_per_task
+    gap_high = cost_per_task(pricey, canonical, high_h).cost_per_task - cost_per_task(cheap, canonical, high_h).cost_per_task
+    assert gap_high > gap_low

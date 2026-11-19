@@ -6,6 +6,7 @@ everything else and references secrets only by environment-variable name.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from model_pipeline.models import Credential
 from model_pipeline.pricing import TIME_PRICE_MODES
 
 # model-pipeline/ is two levels above this file (src/model_pipeline/config.py).
@@ -134,8 +136,11 @@ class ProviderConfig:
     enabled: bool
     api_base: str
     models_url: str
-    api_key_env: str
     pricing_url: str
+    # New shape: one env var holding a JSON array (or comma-separated list).
+    # Legacy shape: one env var holding one key, sent as os.environ/<name>.
+    api_keys_env: str = ""
+    api_key_env: str = ""
     litellm: dict[str, str] = field(default_factory=dict)
     extra_headers: dict[str, str] = field(default_factory=dict)
     supported_endpoints: list[str] = field(default_factory=list)
@@ -162,6 +167,16 @@ class LitellmConfig:
     base_url: str
     master_key_env: str
     tier_model_groups: dict[str, str]
+    # Failover bootstrap emitted on every deployment / suggested router block.
+    # ``num_retries`` is a safe per-order budget; the deployment's own value wins
+    # for that request. ``allowed_fails`` here is the per-deployment benefit
+    # (0 = bench on first failure); the global router default stays separate.
+    num_retries: int = 32
+    allowed_fails: int = 0
+    cooldown_time: int = 1800
+    timeout: int = 20
+    lowest_latency_buffer: float = 0.0
+    global_allowed_fails: int = 5
 
 
 @dataclass
@@ -189,14 +204,77 @@ class Config:
     output_dir: Path
     raw_dir: Path
     logs_dir: Path
+    # Non-fatal configuration problems (duplicate keys, etc.) for the CLI to print.
+    warnings: list[str] = field(default_factory=list)
 
     def secret(self, env_name: str) -> str:
-        value = self.env.get(env_name)
+        # ``load_env`` covers names declared in .env; fall back to a real
+        # process variable so shell-defined keys (and new *_APIS lists) work
+        # without editing the file.
+        value = self.env.get(env_name) or os.environ.get(env_name)
         if not value:
             raise RuntimeError(
-                f"Missing secret '{env_name}'. Add it to {self.repo_root / '.env'}."
+                f"Missing secret '{env_name}'. Add it to {self.repo_root / '.env'} "
+                "or export it in the process environment."
             )
         return value
+
+    def provider_credentials(self, provider: str) -> list[Credential]:
+        """Resolve a provider's key list, or its legacy single key.
+
+        The new ``api_keys_env`` value is one environment variable containing a
+        JSON array (or comma-separated list). ``api_key_env`` remains a
+        one-entry legacy form whose payload keeps the ``os.environ/...``
+        reference. An enabled provider with no usable key fails loudly; a
+        disabled provider yields no credentials.
+        """
+        pcfg = self.providers.get(provider)
+        if pcfg is None:
+            raise RuntimeError(f"Unknown provider {provider!r}")
+        if not pcfg.enabled:
+            return []
+
+        if pcfg.api_keys_env:
+            raw = (
+                self.env.get(pcfg.api_keys_env)
+                or os.environ.get(pcfg.api_keys_env, "")
+            ).strip()
+            if not raw:
+                raise RuntimeError(
+                    f"providers.{provider}.api_keys_env names '{pcfg.api_keys_env}', "
+                    f"but that variable is missing or empty. Add it to "
+                    f"{self.repo_root / '.env'}."
+                )
+            keys = parse_key_list(raw, pcfg.api_keys_env, self.warnings)
+            if not keys:
+                raise RuntimeError(
+                    f"providers.{provider}.api_keys_env '{pcfg.api_keys_env}' "
+                    "contains no usable keys."
+                )
+            return [
+                Credential(
+                    slot=slot,
+                    value=key,
+                    env_name=pcfg.api_keys_env,
+                    raw=True,
+                )
+                for slot, key in enumerate(keys, start=1)
+            ]
+
+        if pcfg.api_key_env:
+            return [
+                Credential(
+                    slot=1,
+                    value=self.secret(pcfg.api_key_env),
+                    env_name=pcfg.api_key_env,
+                    raw=False,
+                )
+            ]
+
+        raise RuntimeError(
+            f"providers.{provider} is enabled but has neither api_keys_env nor "
+            "api_key_env configured."
+        )
 
     def resolve_path(self, relative: str) -> Path:
         return (PROJECT_ROOT / relative).resolve()
@@ -327,6 +405,62 @@ def _plan_name(raw: Any, provider: str) -> str:
     return raw.strip()
 
 
+def parse_key_list(
+    raw: str,
+    env_name: str = "",
+    warnings: list[str] | None = None,
+) -> list[str]:
+    """Parse one provider key list.
+
+    JSON arrays are preferred because a key can contain a comma, quote, or
+    backslash. A plain comma-separated value remains accepted for convenience.
+    Empty entries and duplicates are dropped; duplicates are reported through
+    ``warnings`` rather than silently disappearing.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return []
+
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{env_name or 'key list'} is not valid JSON: {exc}"
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"{env_name or 'key list'} must be a JSON array of strings"
+            )
+        entries = [str(item) for item in parsed]
+    elif text.startswith("{"):
+        raise ValueError(
+            f"{env_name or 'key list'} must be a JSON array of strings, not an object"
+        )
+    else:
+        entries = text.split(",")
+
+    keys: list[str] = []
+    seen: set[str] = set()
+    duplicates = 0
+    for entry in entries:
+        key = entry.strip()
+        if not key:
+            continue
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        keys.append(key)
+
+    if duplicates and warnings is not None:
+        warnings.append(
+            f"{env_name or 'key list'}: ignored {duplicates} duplicate key "
+            f"entr{'y' if duplicates == 1 else 'ies'}"
+        )
+    return keys
+
+
 def _validate_tier_names(
     tier_patterns: dict[str, list[str]],
     tier_floors: dict[str, float],
@@ -371,8 +505,9 @@ def load_config(config_path: Path | str | None = None) -> Config:
             enabled=raw.get("enabled", True),
             api_base=raw["api_base"].rstrip("/"),
             models_url=raw["models_url"],
-            api_key_env=raw["api_key_env"],
             pricing_url=raw["pricing_url"],
+            api_keys_env=str(raw.get("api_keys_env", "") or "").strip(),
+            api_key_env=str(raw.get("api_key_env", "") or "").strip(),
             litellm=raw.get("litellm", {}),
             extra_headers=raw.get("extra_headers", {}),
             supported_endpoints=raw.get("supported_endpoints", []),

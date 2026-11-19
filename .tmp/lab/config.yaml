@@ -1,0 +1,21 @@
+model_list:
+  - model_name: prio
+    litellm_params: {model: openai/mock-k1, api_base: "http://host.containers.internal:8099/v1", api_key: sk-bad-key, order: 1, input_cost_per_token: 0.000001, output_cost_per_token: 0.000002}
+    model_info: {id: lab-k1}
+  - model_name: prio
+    litellm_params: {model: openai/mock-k2, api_base: "http://host.containers.internal:8099/v1", api_key: sk-mock-good, order: 2, input_cost_per_token: 0.000002, output_cost_per_token: 0.000004}
+    model_info: {id: lab-k2}
+  - model_name: prio
+    litellm_params: {model: openai/mock-k3, api_base: "http://host.containers.internal:8100/v1", api_key: sk-mock-good, order: 3, input_cost_per_token: 0.000003, output_cost_per_token: 0.000006}
+    model_info: {id: lab-k3}
+general_settings:
+  master_key: sk-lab-master
+  store_model_in_db: true
+  database_url: postgresql://litellm:litellm@lab-db:5432/litellm
+litellm_settings:
+  drop_params: true
+router_settings:
+  routing_strategy: cost-based-routing
+  num_retries: 3
+  allowed_fails: 1
+  cooldown_time: 60

@@ -193,11 +193,22 @@ class OpenRouterAdapter(ProviderAdapter):
         return models
 
     def to_litellm_deployment(
-        self, model: RawModel, pricing: ResolvedPricing, model_group: str, order: int
+        self,
+        model: RawModel,
+        pricing: ResolvedPricing,
+        model_group: str,
+        order: int,
+        credential=None,
     ) -> dict:
         api_base = self.pcfg.litellm["chat_completions_api_base"]
         return self._assemble(
-            model, pricing, model_group, order, f"openai/{model.model_id}", api_base
+            model,
+            pricing,
+            model_group,
+            order,
+            f"openai/{model.model_id}",
+            api_base,
+            credential,
         )
 
     # -- pricing -----------------------------------------------------------

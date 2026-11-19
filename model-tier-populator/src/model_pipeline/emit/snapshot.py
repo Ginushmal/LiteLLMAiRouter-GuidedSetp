@@ -24,6 +24,9 @@ def models_to_json(models: list[RawModel]) -> list[dict]:
             "output_tokens": m.output_tokens,
             "limits_source": m.limits_source,
             "limits_flags": m.limits_flags,
+            "capabilities": m.capabilities,
+            "capabilities_source": m.capabilities_source,
+            "capabilities_flags": m.capabilities_flags,
             "supported_endpoints": m.supported_endpoints,
             "pricing": (m.pricing.as_dict() if m.pricing else None),
         }
@@ -58,6 +61,9 @@ def models_from_json(rows: list[dict]) -> list[RawModel]:
                 output_tokens=r.get("output_tokens"),
                 limits_source=r.get("limits_source", ""),
                 limits_flags=r.get("limits_flags", []),
+                capabilities=r.get("capabilities", {}) or {},
+                capabilities_source=r.get("capabilities_source", ""),
+                capabilities_flags=r.get("capabilities_flags", []) or [],
             )
         )
     return models

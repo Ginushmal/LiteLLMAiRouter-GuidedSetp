@@ -1,5 +1,5 @@
 ---
-name: Update LiteLLM Learnings
+name: update-litellm-learnings
 description: Update the project's learning docs — LiteLLM-Learnings.md (concept reference) and Setup-Guide.md (step-by-step setup) — with new concepts, features, corrections, or setup changes. Use when the user asks to add, update, or extend either guide.
 ---
 # Update LiteLLM Docs
@@ -164,6 +164,9 @@ Always fetch and verify against these official sources before writing:
 | Production Deployment | https://docs.litellm.ai/docs/proxy/deploy |
 | Admin UI | https://docs.litellm.ai/docs/proxy/ui |
 | Model Management | https://docs.litellm.ai/docs/proxy/model_management |
+| Vision / multimodal input | https://docs.litellm.ai/docs/completion/vision |
+| Reasoning content | https://docs.litellm.ai/docs/reasoning_content |
+| Anthropic reasoning effort | https://docs.litellm.ai/docs/providers/anthropic_effort |
 | Service Accounts | https://docs.litellm.ai/docs/proxy/service_accounts |
 | Access Control (RBAC) | https://docs.litellm.ai/docs/proxy/access_control |
 | Model Access (restrict by key/team) | https://docs.litellm.ai/docs/proxy/model_access |
@@ -171,17 +174,42 @@ Always fetch and verify against these official sources before writing:
 | Key-Based Auth (model resolution) | https://docs.litellm.ai/docs/proxy/key_auth_arch |
 | Internal User Self-Serve | https://docs.litellm.ai/docs/proxy/self_serve |
 | Multi-Tenant Architecture | https://docs.litellm.ai/docs/proxy/multi_tenant_architecture |
+| Enterprise feature list (what the license unlocks) | https://docs.litellm.ai/docs/enterprise |
+| Free vs Enterprise feature comparison | https://www.litellm.ai/features |
+| AI Hub (Model / Agent / MCP / Skills publishing) | https://docs.litellm.ai/docs/proxy/ai_hub |
+| Agent Gateway (A2A) overview | https://docs.litellm.ai/docs/a2a |
+| Skills Gateway (`/skill-hub` — main-only, 404 on v1.108.x) | https://docs.litellm.ai/docs/skills_gateway |
+| MCP Overview | https://docs.litellm.ai/docs/mcp |
+| OIDC SSO (free ≤5 users, ENT above) | https://docs.litellm.ai/docs/proxy/admin_ui_sso |
+| SAML 2.0 SSO | https://docs.litellm.ai/docs/proxy/saml_sso |
+| SSO permissions | https://docs.litellm.ai/docs/proxy/access_management/sso_permissions |
 | Cost Map (JSON) | https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json |
+| Artificial Analysis benchmarking methodology (definition of *Cost per Task* — input, cached, and output token prices × tokens consumed) | https://artificialanalysis.ai/methodology |
+| Artificial Analysis Intelligence Index (per-evaluation cost from input, cache hit, cache write, reasoning, and answer token prices) | https://artificialanalysis.ai/evaluations/artificial-analysis-intelligence-index |
+| Artificial Analysis data-API reference (which cost/token fields are Free vs Pro tier) | https://artificialanalysis.ai/data-api/docs/reference |
 | Cost Calculator (source, for exact lookup behavior) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/cost_calculator.py |
 | Router (source: retries, failover, `order` filtering, weighted failover) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router.py |
 | Utils (source: `should_retry`, `get_order_filtered_deployments`) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/utils.py |
 | Router utils: fallback event handlers (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/fallback_event_handlers.py |
 | Router utils: cooldown handlers (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/cooldown_handlers.py |
+| Router utils: reasoning effort capability (source: `reasoning_effort_levels`, per-level flags) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/reasoning_effort_capability.py |
 | Router utils: routing groups (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_utils/routing_groups.py |
 | Router strategy: lowest cost (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_strategy/lowest_cost.py |
 | Router strategy: lowest latency (source) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/router_strategy/lowest_latency.py |
 | Model management endpoints (source: `patch_model`, `update_db_model` — PATCH merges `model_info`, POST `/model/update` ignores it) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/management_endpoints/model_management_endpoints.py |
 | Types / utils (source: `server_derived_pricing_fields`, `echoed_cost_map_fields`, `without_server_derived_pricing` — which `model_info` keys the write path keeps) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/types/utils.py |
+| AI Hub (Model/Agent/MCP/Skills Hub tabs + public endpoints) | https://docs.litellm.ai/docs/proxy/ai_hub |
+| SSO for Admin UI (OIDC) | https://docs.litellm.ai/docs/proxy/admin_ui_sso |
+| SSO for Admin UI (SAML 2.0) | https://docs.litellm.ai/docs/proxy/saml_sso |
+| MCP Gateway overview | https://docs.litellm.ai/docs/mcp |
+| Skills API (`/v1/skills`) | https://docs.litellm.ai/docs/skills |
+| Skills Gateway / Skills Hub (`/skill-hub`) | https://docs.litellm.ai/docs/skills_gateway |
+| Enterprise feature list (what a license unlocks) | https://docs.litellm.ai/docs/enterprise |
+| SSO free-tier gate (source: `_raise_if_sso_exceeds_free_user_limit`, 5-user cap) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/management_endpoints/ui_sso.py |
+| AI Hub tab gating check (source: tabs render with no `premiumUser` guard) | https://raw.githubusercontent.com/BerriAI/litellm/main/ui/litellm-dashboard/src/components/AIHub/ModelHubTable.tsx |
+| MCP management endpoints (source: no license checks) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/management_endpoints/mcp_management_endpoints.py |
+| Skills Hub endpoints (source: no license checks) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/discovery_endpoints/skill_hub_endpoints.py |
+| Agent endpoints (source: no license checks) | https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/agent_endpoints/endpoints.py |
 
 ## Current Structure
 

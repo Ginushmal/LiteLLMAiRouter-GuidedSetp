@@ -123,6 +123,28 @@ class LimitResolver:
     def _norm(self, model_id: str) -> str:
         return normalize_model_id(model_id, self._strip, self._speed)
 
+    def provider_entry(
+        self, provider_ids: list[str], model_id: str
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Provider-only catalog entry, exact id first then normalized.
+
+        Capabilities deliberately do not fall back to another provider: media
+        and reasoning support can differ by serving provider. Returns
+        ``(entry, source)``; ``(None, "")`` means unresolved.
+        """
+        for provider_id in provider_ids:
+            entry = self._by_provider.get(provider_id, {}).get(model_id)
+            if entry is not None:
+                return entry, f"models.dev:{provider_id}"
+
+        key = self._norm(model_id)
+        for provider_id in provider_ids:
+            candidates = self._norm_by_provider.get(provider_id, {}).get(key, [])
+            if candidates:
+                _matched_id, entry = min(candidates, key=lambda item: item[0])
+                return entry, f"models.dev:{provider_id}"
+        return None, ""
+
     # -- resolution --------------------------------------------------------
     def resolve(self, provider_ids: list[str], model_id: str) -> ResolvedLimits:
         """Resolve ``model_id`` for a pipeline provider, most specific source first."""

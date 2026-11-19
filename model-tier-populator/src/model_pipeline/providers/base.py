@@ -15,10 +15,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
+import httpx
+
 from model_pipeline.config import Config, ProviderConfig
-from model_pipeline.http import HttpClient, ScrapeRecorder, ScrapeRecord
-from model_pipeline.models import RawModel, ResolvedPricing, deployment_id
+from model_pipeline.http import HttpClient, ScrapeRecord, ScrapeRecorder
+from model_pipeline.models import Credential, RawModel, ResolvedPricing, deployment_id
 from model_pipeline.textutil import normkey
+
+# Statuses that mean "try the next API key". 400/404 are request/endpoint
+# problems, not key problems, so they stay terminal.
+_KEY_FALLBACK_STATUSES = frozenset({401, 402, 403, 408, 409, 429})
 
 
 class ProviderAdapter(ABC):
@@ -29,7 +35,18 @@ class ProviderAdapter(ABC):
         self.pcfg: ProviderConfig = cfg.providers[self.name]
         self.http = http
         self.recorder = recorder
-        self.api_key = cfg.secret(self.pcfg.api_key_env)
+        if hasattr(cfg, "provider_credentials"):
+            self.credentials: list[Credential] = cfg.provider_credentials(self.name)
+        else:
+            # Lightweight test/config doubles predate the key-list API.
+            legacy = getattr(self.pcfg, "api_key_env", "")
+            value = cfg.secret(legacy) if legacy and hasattr(cfg, "secret") else ""
+            self.credentials = (
+                [Credential(1, value, legacy, raw=False)] if legacy else []
+            )
+        # Kept for adapters/tests that reference a single key; the fetch path
+        # always uses ``self.credentials`` so the list is authoritative.
+        self.api_key = self.credentials[0].value if self.credentials else ""
 
     # -- fetch forensics ---------------------------------------------------
     def _record(
@@ -53,6 +70,55 @@ class ProviderAdapter(ABC):
             notes=notes,
         )
         self.recorder.record(rec, body=(resp.text if resp is not None else ""))
+
+    def fetch_with_key_fallback(
+        self, url: str, *, timeout: float | None = None
+    ) -> httpx.Response:
+        """GET ``url`` with the provider's keys in order.
+
+        Authentication, payment, authorization, timeout/conflict, rate-limit,
+        server, and transport failures move to the next slot. A 400/404 means
+        the request or endpoint is wrong, so it is raised immediately. Only the
+        slot and fingerprint are recorded; the raw key never reaches a log.
+        """
+        if not self.credentials:
+            raise RuntimeError(
+                f"{self.name}: no API keys configured (api_keys_env/api_key_env)"
+            )
+
+        errors: list[str] = []
+        for credential in self.credentials:
+            label = f"slot {credential.slot} ({credential.fingerprint})"
+            headers = {"Authorization": f"Bearer {credential.value}"}
+            try:
+                resp = self.http.get(url, headers=headers)
+            except httpx.RequestError as exc:
+                message = f"{label}: {type(exc).__name__}: {exc}"
+                self._record(url, "GET", error=message)
+                errors.append(message)
+                continue
+
+            if 200 <= resp.status_code < 300:
+                return resp
+
+            retryable = (
+                resp.status_code in _KEY_FALLBACK_STATUSES or resp.status_code >= 500
+            )
+            message = f"{label}: HTTP {resp.status_code}"
+            self._record(url, "GET", resp=resp, error=message)
+            errors.append(message)
+            if not retryable:
+                # The request or endpoint is wrong; another key cannot fix it.
+                raise httpx.HTTPStatusError(
+                    f"{self.name} {url} returned {resp.status_code}",
+                    request=resp.request,
+                    response=resp,
+                )
+
+        raise RuntimeError(
+            f"{self.name} {url} failed for all {len(self.credentials)} configured "
+            "key slot(s): " + "; ".join(errors)
+        )
 
     # -- interface ---------------------------------------------------------
     @abstractmethod
@@ -81,6 +147,7 @@ class ProviderAdapter(ABC):
         pricing: ResolvedPricing,
         model_group: str,
         order: int,
+        credential: Credential | None = None,
     ) -> dict:
         """Build the LiteLLM ``/model/new`` payload for one deployment."""
 
@@ -120,24 +187,54 @@ class ProviderAdapter(ABC):
         order: int,
         model_param: str,
         api_base: str,
+        credential: Credential | None = None,
     ) -> dict:
         litellm_params: dict = {
             "model": model_param,
             "api_base": api_base,
-            "api_key": f"os.environ/{self.pcfg.api_key_env}",
             "order": order,
         }
+        # New list mode sends the raw key to /model/new (resolved by the
+        # populate phase, never stored in tier-output.json). Legacy mode keeps
+        # the proxy-side os.environ reference.
+        if credential is not None and not credential.raw:
+            litellm_params["api_key"] = f"os.environ/{credential.env_name}"
+        elif credential is None and self.pcfg.api_key_env:
+            litellm_params["api_key"] = f"os.environ/{self.pcfg.api_key_env}"
+
         litellm_params.update(self._price_params(pricing))
         if self.pcfg.extra_headers:
             litellm_params["extra_headers"] = dict(self.pcfg.extra_headers)
+        litellm_settings = getattr(getattr(self, "cfg", None), "litellm", None)
+        if litellm_settings is not None:
+            num_retries = getattr(litellm_settings, "num_retries", None)
+            if num_retries is not None:
+                litellm_params["num_retries"] = int(num_retries)
 
+        slot = credential.slot if credential is not None else 1
         model_info = {
-            "id": deployment_id(model_group, self.name, model.model_id),
+            "id": deployment_id(model_group, self.name, model.model_id, slot),
             "base_model": model_param,
             "provider": self.name,
             "model_group": model_group,
             "provider_model_name": model.display_name,
+            "mode": "chat",
+            "credential_slot": slot,
         }
+        if credential is not None:
+            model_info["api_key_fingerprint"] = credential.fingerprint
+        if litellm_settings is not None:
+            allowed_fails = getattr(litellm_settings, "allowed_fails", None)
+            cooldown_time = getattr(litellm_settings, "cooldown_time", None)
+            if allowed_fails is not None:
+                model_info["allowed_fails"] = int(allowed_fails)
+            if cooldown_time is not None:
+                model_info["cooldown_time"] = int(cooldown_time)
+
+        # Capabilities resolved from the provider's own models.dev entry. Empty
+        # means unknown, so nothing is written (never invent a capability).
+        model_info.update(model.capabilities)
+
         # Emit the real token limits. Without them LiteLLM's model-info
         # discovery mirrors the context window into max_output_tokens, which is
         # what made clients ask for completions no model can serve.

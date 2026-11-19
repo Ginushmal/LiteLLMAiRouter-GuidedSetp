@@ -27,9 +27,9 @@ def test_tier_summary_separates_pinned_and_scored_deployments():
         model_group="ultra-tier",
         pool_size=7,
         deployments=[
-            SimpleNamespace(is_pinned=True),
-            SimpleNamespace(is_pinned=True),
-            SimpleNamespace(is_pinned=False),
+            SimpleNamespace(is_pinned=True, order=1, canonical_slug="a"),
+            SimpleNamespace(is_pinned=True, order=2, canonical_slug="b"),
+            SimpleNamespace(is_pinned=False, order=3, canonical_slug="c"),
         ],
     )
 

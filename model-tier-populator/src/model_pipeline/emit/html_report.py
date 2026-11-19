@@ -14,6 +14,14 @@ import html
 import math
 from typing import Any
 
+from model_pipeline.capabilities import (
+    FLAG_MODALITIES_MISSING,
+    FLAG_NON_CHAT_OUTPUT,
+    FLAG_REASONING_LEVELS_MISSING,
+)
+from model_pipeline.capabilities import (
+    FLAG_UNRESOLVED as CAPABILITY_UNRESOLVED,
+)
 from model_pipeline.emit.report import _canon_index
 from model_pipeline.limits import (
     FLAG_OUTPUT_EQUALS_CONTEXT,
@@ -26,6 +34,13 @@ _LIMIT_HINTS = {
     FLAG_UNRESOLVED: "no catalog entry published an output limit; the value is left unset",
     FLAG_OUTPUT_EQUALS_CONTEXT: "catalog entry reports output == its own context window (likely copied)",
     FLAG_OUTPUT_NOT_BELOW_CONTEXT: "output limit is not smaller than the provider's context window",
+}
+
+_CAPABILITY_HINTS = {
+    CAPABILITY_UNRESOLVED: "no provider catalog entry; capabilities omitted",
+    FLAG_MODALITIES_MISSING: "no modality declaration; media flags omitted",
+    FLAG_REASONING_LEVELS_MISSING: "reasoning but no published effort levels",
+    FLAG_NON_CHAT_OUTPUT: "output is not text; excluded from chat tiers",
 }
 
 
@@ -74,14 +89,26 @@ def _low_conf_block(low_conf: list | None) -> str:
 def _tier_cards(result: ScoreResult) -> str:
     parts: list[str] = []
     for tier in result.tiers:
-        rows: list[str] = []
+        grouped: dict[tuple, dict] = {}
+        order_keys: list[tuple] = []
         for d in tier.deployments:
+            key = (d.order, d.canonical_slug, d.provider, d.model_id)
+            if key not in grouped:
+                grouped[key] = {"dep": d, "keys": 0}
+                order_keys.append(key)
+            grouped[key]["keys"] += 1
+        model_count = len({(d.order, d.canonical_slug) for d in tier.deployments})
+
+        rows: list[str] = []
+        for key in order_keys:
+            d = grouped[key]["dep"]
             top = d.order == 1
             cls = ' class="top-pick"' if top else ""
             order = f"{d.order} &#9733;" if top else str(d.order)
             rows.append(
                 f"<tr{cls}><td>{order}</td><td>{_e(d.display_name)}</td>"
-                f"<td>{_e(d.provider)}</td><td><code>{_e(d.model_id)}</code></td>"
+                f"<td>{_e(d.provider)}</td><td>{grouped[key]['keys']}</td>"
+                f"<td><code>{_e(d.model_id)}</code></td>"
                 f"<td data-v=\"{d.intelligence}\">{d.intelligence}</td>"
                 f"<td data-v=\"{d.cost_per_task}\">{_money(d.cost_per_task)}</td>"
                 f"<td>{_latency(d.latency_seconds)}</td>"
@@ -90,7 +117,7 @@ def _tier_cards(result: ScoreResult) -> str:
             )
         deps = "".join(rows)
         pinned = ""
-        empty_row = '<tr><td colspan="10"><em>No qualifying models.</em></td></tr>'
+        empty_row = '<tr><td colspan="11"><em>No qualifying models.</em></td></tr>'
         if tier.pinned:
             items = "".join(
                 f"<li>{_e(slug)} (order {order})</li>"
@@ -106,14 +133,16 @@ def _tier_cards(result: ScoreResult) -> str:
             f"<code>{_e(tier.model_group)}</code></h2>"
             f"<p>Floor {tier.floor_intelligence:.2f} ({tier.floor_frac:.2f}x SOTA) · "
             f"lambda {tier.lam} · rho {tier.rho} &rarr; mu {tier.mu:.5g} · "
-            f"pool {tier.pool_size} · {len(tier.deployments)} deployments · "
+            f"pool {tier.pool_size} · {model_count} models · "
+            f"{len(tier.deployments)} key deployments · "
             f"backups {tier.backup_count}</p>"
             f"{pinned}{excluded}"
             '<p class="note">&#9733; marks each tier&#39;s order-1 pick '
             "(the deployment the router tries first).</p>"
             '<table class="deps"><thead><tr><th>#</th><th>Model</th>'
-            "<th>Provider</th><th>Model ID</th><th>Intel</th><th>Cost/task</th>"
-            "<th>Latency</th><th>NMB</th><th>Kind</th><th>API base</th></tr></thead>"
+            "<th>Provider</th><th>Keys</th><th>Model ID</th><th>Intel</th>"
+            "<th>Cost/task</th><th>Latency</th><th>NMB</th><th>Kind</th>"
+            "<th>API base</th></tr></thead>"
             "<tbody>" + (deps or empty_row) + "</tbody></table></section>"
         )
     return "\n".join(parts)
@@ -508,6 +537,22 @@ def _limits_section(result: ScoreResult) -> str:
     return f"<section><h2>Token limits</h2>{limits}</section>"
 
 
+def _capability_block(result: ScoreResult) -> str:
+    rows: list[str] = []
+    for flag, hint in _CAPABILITY_HINTS.items():
+        items = sorted(
+            key for key, flags in result.capability_flags.items() if flag in flags
+        )
+        if not items:
+            continue
+        shown = ", ".join(items[:20]) + (" …" if len(items) > 20 else "")
+        rows.append(
+            f"<p><strong>{_e(flag)}</strong> ({len(items)}) — {_e(hint)}: "
+            f"{_e(shown)}</p>"
+        )
+    return "".join(rows)
+
+
 def _warnings_section(result: ScoreResult, low_conf: list | None) -> str:
     """All data-quality warnings, grouped at the bottom of the page."""
     block = _low_conf_block(low_conf)
@@ -516,11 +561,12 @@ def _warnings_section(result: ScoreResult, low_conf: list | None) -> str:
         if result.pin_warnings
         else ""
     )
-    if not block and not pin_warnings:
+    capability = _capability_block(result)
+    if not block and not pin_warnings and not capability:
         return ""
     return (
         '<section id="warnings"><h2>Warnings</h2>'
-        f"{block}{pin_warnings}</section>"
+        f"{block}{pin_warnings}{capability}</section>"
     )
 
 
@@ -593,7 +639,9 @@ _JS = (
 def build_html(result: ScoreResult, low_conf: list | None = None) -> str:
     """Render the full ranking story as one self-contained HTML page."""
     methods = ", ".join(f"{k}={v}" for k, v in result.cost_methods.items())
-    has_warnings = bool(result.pin_warnings) or bool(low_conf)
+    has_warnings = (
+        bool(result.pin_warnings) or bool(low_conf) or bool(result.capability_flags)
+    )
     warnings_link = '<a href="#warnings">Warnings</a>' if has_warnings else ""
     return (
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"

@@ -66,14 +66,14 @@ launcher runs `refresh`, opens the report, then offers the guarded
 
   | Key | Used for |
   |-----|----------|
-  | `COMMANDCODE_API_KEY` | CommandCode models |
-  | `OPENCODE_API_KEY` | OpenCode models |
-  | `OPEN_ROUTER_API_KEY` | OpenRouter models + the Jev classifier (OpenRouter Decisions) |
+  | `COMMANDCODE_APIS` / `OPENCODE_APIS` / `OPEN_ROUTER_APIS` | JSON arrays of raw keys per provider. `fetch` tries them in order; `populate` publishes one deployment per key. The legacy single-key `*_API_KEY` variables still work (they publish `os.environ/NAME`). |
+  | `JEV_API_KEY` | Jev name matching (a CommandCode key; the same variable feeds the router classifier in the container) |
   | `ARTIFICIAL_ANALYSIS_API_KEY` | canonical identity + intelligence scores |
   | `LITELLM_MASTER_KEY` | LiteLLM management API |
 
-  The LiteLLM container must also receive `OPENCODE_API_KEY` (already added to
-  `docker-compose.yml`).
+  Provider keys are read from the populator's `.env` and sent as raw keys during
+  `populate`, so the LiteLLM container needs no provider variables at all. Keep
+  a legacy single key only if you still use the `os.environ/...` form.
 
 ## Quick start
 
@@ -111,6 +111,11 @@ uv run model-pipeline score               # 2. rank           -> output/tier-out
 uv run model-pipeline populate --dry-run  # 3a. preview the diff
 uv run model-pipeline populate            # 3b. apply to LiteLLM
 ```
+
+`score` also writes `output/suggested_router_config.yaml`. Review it and copy
+its `router_settings` into the root `config.yaml` (latency routing, per-order
+retry policy, and the cooldown/walk-time guidance). The pipeline never edits the
+root config.
 
 ## TLS note — endpoint is signed by an internal CA
 
@@ -172,10 +177,11 @@ between machines.
 | `models_snapshot.json` | fetched provider models + normalized prices (lets `score` run offline) |
 | `aa_snapshot.json` | cached Artificial Analysis models list |
 | `suggested_config.yaml` | task-profile values suggested from provider docs (advisory) |
-| `tier-output.json` | **the tier list** — self-contained; all `populate` needs |
-| `tier-output.md` | same result as a readable table |
-| `tier-ranking.md` | full ranking story: every scored model, per-tier NMB rankings with the cut line, Pareto dominators, exclusions, limit flags |
+| `tier-output.json` | **the tier list** — self-contained; all `populate` needs. Each deployment carries its credential slot/fingerprint, capability source/flags, and full LiteLLM payload |
+| `tier-output.md` | same result as a readable table, with a key count per model/provider and capability warnings |
+| `tier-ranking.md` | full ranking story: every scored model, per-tier NMB rankings with the cut line, Pareto dominators, exclusions, token-limit and capability flags |
 | `tier-report.html` | same story as a single self-contained page (no network needed), with an interactive Pareto chart and highlighted per-tier top picks — written by every `score`/`refresh`/`run`; open it in any browser, no LiteLLM required |
+| `suggested_router_config.yaml` | reviewable `router_settings` for same-order latency-pool failover; copy into the root `config.yaml`, never applied automatically |
 
 ## Configuration
 
@@ -197,6 +203,16 @@ to the others. Global patterns always win.
 force-included at the top of a tier, ahead of NMB selection. Pins bypass the
 tier's intelligence floor, consume top-K slots, and never override an exclusion.
 Unknown, duplicate, or excluded slugs produce warnings and are skipped.
+
+`providers.<name>.api_keys_env` names one env var holding a JSON array of keys.
+The pipeline tries them in order for `/models` and publishes one deployment per
+key at the same order; a failed key is benched by per-deployment
+`allowed_fails: 0` and retried on a sibling. `litellm.num_retries`,
+`allowed_fails`, `cooldown_time`, `timeout`, and `lowest_latency_buffer` are the
+bootstrap values written into every deployment and the suggested router block.
+Capabilities (`supports_vision`, `supports_audio_output`, `modalities`,
+`supports_reasoning`, `reasoning_effort_levels`, per-level flags) come from the
+provider's own models.dev entry; unknown fields are omitted and flagged.
 
 `pricing.time_price_mode` chooses how time-of-day prices are collapsed:
 `today` (weighted over today's slice of the active window — a weekday-only
@@ -230,6 +246,13 @@ OpenRouter needs no scraping: its public models endpoint carries models **and**
 prices. `:batch` variants are dropped inside the adapter (Batch API, not chat),
 `:free` variants are kept as $0 deployments of their base model, and the
 `openrouter/free` router entry is excluded through `exclude.patterns`.
+
+All providers accept a key list. CommandCode and OpenCode use it for the
+authenticated `/models` fetch; OpenRouter's catalog is public but the keys are
+used when publishing. If one key fails authentication, payment, authorization,
+rate limit, timeout/conflict, a 5xx, or the transport, the next key is tried; the
+fetch phase fails only when every key fails. A `400`/`404` is treated as a
+request/endpoint error, not a key error.
 
 ## Docs
 

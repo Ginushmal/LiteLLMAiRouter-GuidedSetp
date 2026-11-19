@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from model_pipeline.config import DedupConfig
-from model_pipeline.dedup.mapper import map_models
+from model_pipeline.dedup.mapper import _MATCH_INSTRUCTIONS, map_models
 from model_pipeline.dedup.mappings_csv import FIELDS, read_mappings, write_mappings
 from model_pipeline.dedup.normalize import CanonicalIndex, normalize_key
 from model_pipeline.dedup.prefilter import shortlist
@@ -41,6 +41,27 @@ def test_exact_none_when_ambiguous_name_only():
     idx = CanonicalIndex(models, [])
     # "model-x" doesn't match either slug and the name is ambiguous -> None
     assert idx.exact("model-x") is None
+
+
+# -- match instructions (the contract Jev is asked to follow) -------------
+def test_match_instructions_forbid_crossing_a_class_token():
+    # Regression: `tencent/hy4-flash` was mapped to `tencent-hy4` at 0.89
+    # confidence, so a cheap flash sibling inherited the measured pro model's
+    # intelligence score and ranked #2 in the Pro tier. The instruction text
+    # is the only guard the classifier sees, so pin what it must say.
+    text = _MATCH_INSTRUCTIONS.lower()
+    for token in ("flash", "lite", "mini", "pro", "max", "ultra", "plus"):
+        assert token in text, f"class token {token!r} must be named"
+    assert "either direction" in text
+    assert "class token" in text
+    assert "unmapped" in text
+
+
+def test_match_instructions_say_borrowing_a_score_is_worse_than_none():
+    text = _MATCH_INSTRUCTIONS.lower()
+    assert "inheriting a sibling's intelligence score is worse than having none" in text
+    # A bare name may only resolve to the base variant when no class token moves.
+    assert "only a name with no class token" in text
 
 
 # -- variant parsing (decorates option text; Jev disambiguates) -----------

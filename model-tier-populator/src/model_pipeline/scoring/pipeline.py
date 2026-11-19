@@ -16,12 +16,15 @@ Ranking flow:
 from __future__ import annotations
 
 import dataclasses
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from model_pipeline.capabilities import FLAG_NON_CHAT_OUTPUT
 from model_pipeline.config import Config
 from model_pipeline.models import (
     CanonicalModel,
+    Credential,
     Deployment,
     Mapping,
     RankedModel,
@@ -29,9 +32,19 @@ from model_pipeline.models import (
 )
 from model_pipeline.providers.base import ProviderAdapter
 from model_pipeline.scoring.cost import cost_per_task
-from model_pipeline.scoring.nmb import Group, assign_orders, calibrate_mu, nmb, rank_groups
+from model_pipeline.scoring.nmb import (
+    Group,
+    assign_orders,
+    calibrate_mu,
+    nmb,
+    rank_groups,
+)
 from model_pipeline.scoring.pareto import dominator_map, pareto_survivors
-from model_pipeline.scoring.tiers import absolute_floors, eligible_tiers, sota_intelligence
+from model_pipeline.scoring.tiers import (
+    absolute_floors,
+    eligible_tiers,
+    sota_intelligence,
+)
 
 
 @dataclass
@@ -69,11 +82,22 @@ class ScoreResult:
     dominators: dict[str, tuple[str, float, float]] = field(default_factory=dict)
     # "provider:model" -> token-limit flags, for the explainability report.
     limit_flags: dict[str, list[str]] = field(default_factory=dict)
+    # "provider:model" -> capability-resolution flags.
+    capability_flags: dict[str, list[str]] = field(default_factory=dict)
     # Pin problems that did not stop the run (unknown/excluded/duplicate slugs).
     pin_warnings: list[str] = field(default_factory=list)
 
     def all_deployments(self) -> list[Deployment]:
         return [d for t in self.tiers for d in t.deployments]
+
+
+def _credentials_for(adapter) -> list[Credential]:
+    """Provider credentials, with a one-slot fallback for test adapters."""
+    credentials = getattr(adapter, "credentials", None)
+    if credentials:
+        return list(credentials)
+    env_name = getattr(getattr(adapter, "pcfg", None), "api_key_env", "")
+    return [Credential(slot=1, value="", env_name=env_name, raw=False)]
 
 
 def _raw_for(d: Deployment) -> RawModel:
@@ -87,6 +111,9 @@ def _raw_for(d: Deployment) -> RawModel:
         output_tokens=d.output_tokens,
         limits_source=d.limits_source,
         limits_flags=list(d.limits_flags),
+        capabilities=dict(d.capabilities),
+        capabilities_source=d.capabilities_source,
+        capabilities_flags=list(d.capabilities_flags),
     )
 
 
@@ -111,6 +138,7 @@ def _build_deployments(
         "unmapped": [],
         "no_pricing": [],
         "no_intelligence": [],
+        "non_chat_output": [],
     }
 
     for mp in mappings:
@@ -139,6 +167,9 @@ def _build_deployments(
         if model is None or model.pricing is None:
             excluded["no_pricing"].append(tag)
             continue
+        if FLAG_NON_CHAT_OUTPUT in model.capabilities_flags:
+            excluded["non_chat_output"].append(tag)
+            continue
         if canonical.intelligence is None:
             excluded["no_intelligence"].append(tag)
             continue
@@ -164,6 +195,9 @@ def _build_deployments(
                 output_tokens=model.output_tokens,
                 limits_source=model.limits_source,
                 limits_flags=list(model.limits_flags),
+                capabilities=dict(model.capabilities),
+                capabilities_source=model.capabilities_source,
+                capabilities_flags=list(model.capabilities_flags),
                 effective_prices=cost.prices.as_dict(),
                 provider_pricing=model.pricing,
             )
@@ -449,15 +483,43 @@ def score(
         pins, pinned_orders = _pinned_deployments(resolved, lam, mu)
         selected = pins + selected
 
+        expanded: list[Deployment] = []
         for d in selected:
             d.tier = tier_name
             d.model_group = model_group
-            payload = adapters[d.provider].to_litellm_deployment(
-                _raw_for(d), d.provider_pricing, model_group, d.order
-            )
-            d.litellm_params = payload
-            d.api_base = payload["litellm_params"]["api_base"]
             cost_methods[d.cost_method] = cost_methods.get(d.cost_method, 0) + 1
+            credentials = _credentials_for(adapters[d.provider])
+            if not credentials:
+                raise RuntimeError(
+                    f"{d.provider} is enabled but has no credentials for "
+                    f"{d.model_id}"
+                )
+            for credential in credentials:
+                copy = dataclasses.replace(
+                    d,
+                    credential_slot=credential.slot,
+                    api_key_fingerprint=credential.fingerprint,
+                    credential_count=len(credentials),
+                )
+                payload = adapters[copy.provider].to_litellm_deployment(
+                    _raw_for(copy),
+                    copy.provider_pricing,
+                    model_group,
+                    copy.order,
+                    credential,
+                )
+                copy.litellm_params = payload
+                copy.api_base = payload["litellm_params"]["api_base"]
+                expanded.append(copy)
+
+        # One count for the whole same-order group (all providers' keys), used
+        # by the report/artifact and never for ranking.
+        group_counts = Counter(
+            (d.model_group, d.canonical_slug, d.order) for d in expanded
+        )
+        for d in expanded:
+            d.credential_count = group_counts[(d.model_group, d.canonical_slug, d.order)]
+        selected = expanded
 
         tiers.append(
             ScoredTier(
@@ -486,6 +548,11 @@ def score(
         for m in models_index.values()
         if m.limits_flags
     }
+    capability_flags = {
+        f"{m.provider}:{m.model_id}": list(m.capabilities_flags)
+        for m in models_index.values()
+        if m.capabilities_flags
+    }
     return ScoreResult(
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         sota_intelligence=sota,
@@ -508,5 +575,6 @@ def score(
         pareto_dropped=len(all_slugs) - kept,
         dominators=dominators,
         limit_flags=limit_flags,
+        capability_flags=capability_flags,
         pin_warnings=pin_warnings,
     )

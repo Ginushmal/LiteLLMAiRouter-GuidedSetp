@@ -70,6 +70,37 @@ def _print_limit_warnings(flagged: dict[str, list[str]]) -> None:
             print(f"    … and {len(items) - 10} more (see the ranking report)")
 
 
+def _print_capability_warnings(flagged: dict[str, list[str]]) -> None:
+    """Print unresolved/partial capability metadata for the reviewer."""
+    from model_pipeline.capabilities import (
+        FLAG_MODALITIES_MISSING,
+        FLAG_NON_CHAT_OUTPUT,
+        FLAG_REASONING_LEVELS_MISSING,
+        FLAG_UNRESOLVED,
+    )
+
+    notes = (
+        (FLAG_UNRESOLVED, "have no provider catalog entry (capabilities omitted)"),
+        (FLAG_MODALITIES_MISSING, "have no modality declaration (media flags omitted)"),
+        (FLAG_REASONING_LEVELS_MISSING, "reason but publish no effort levels"),
+        (FLAG_NON_CHAT_OUTPUT, "do not output text and were excluded from chat tiers"),
+    )
+    for flag, note in notes:
+        items = sorted(key for key, flags in flagged.items() if flag in flags)
+        if not items:
+            continue
+        print(f"  warning: {len(items)} model(s) {note}:")
+        for item in items[:10]:
+            print(f"    {item}")
+        if len(items) > 10:
+            print(f"    … and {len(items) - 10} more")
+
+
+def _print_config_warnings(cfg: Config) -> None:
+    for warning in getattr(cfg, "warnings", []):
+        print(f"  warning: {warning}", file=sys.stderr)
+
+
 def _print_plan_warnings(adapter) -> None:
     """Report models dropped because the subscription plan does not serve them.
 
@@ -103,6 +134,7 @@ def _print_plan_warnings(adapter) -> None:
 # fetch
 # --------------------------------------------------------------------------- #
 def cmd_fetch(args: argparse.Namespace) -> int:
+    from model_pipeline.capabilities import apply_capabilities
     from model_pipeline.dedup.jev import JevClient
     from model_pipeline.dedup.mapper import map_models
     from model_pipeline.dedup.mappings_csv import (
@@ -117,6 +149,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     cfg.pricing.as_of = _as_of_for_run(cfg, args)
+    _print_config_warnings(cfg)
     http = HttpClient()
     recorder = ScrapeRecorder(cfg.raw_dir, cfg.logs_dir)
 
@@ -128,13 +161,18 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         _print_plan_warnings(adapter)
         models.extend(fetched)
 
-    print("  fetching token limits from models.dev...")
+    print("  fetching token limits and capabilities from models.dev...")
     resolver = fetch_catalog(cfg, http, recorder)
     if resolver is None:
-        print("  warning: models.dev unreachable; token limits will be unresolved")
+        print(
+            "  warning: models.dev unreachable; token limits and capabilities "
+            "will be unresolved"
+        )
     else:
         print(f"  models.dev: {resolver.model_count} models")
-    _print_limit_warnings(apply_limits(models, resolver, models_dev_ids(cfg)))
+    provider_ids = models_dev_ids(cfg)
+    _print_limit_warnings(apply_limits(models, resolver, provider_ids))
+    _print_capability_warnings(apply_capabilities(models, resolver, provider_ids))
 
     no_cache = bool(getattr(args, "no_cache", False) or getattr(args, "refresh_aa", False))
     print("  fetching Artificial Analysis canonical models...")
@@ -174,12 +212,13 @@ def _print_pin_warnings(warnings: list[str]) -> None:
 
 
 def _tier_summary(tier) -> str:
-    """One tier's deployment line, separating pinned from scored deployments."""
-    pinned = sum(1 for d in tier.deployments if d.is_pinned)
-    scored = len(tier.deployments) - pinned
+    """One tier's model/key line, separating pinned from scored models."""
+    models = {(d.order, d.canonical_slug) for d in tier.deployments}
+    pinned = {(d.order, d.canonical_slug) for d in tier.deployments if d.is_pinned}
     return (
         f"{tier.name:11} -> {tier.model_group:16} "
-        f"{len(tier.deployments)} deployments ({pinned} pinned, {scored} scored, "
+        f"{len(models)} models ({len(pinned)} pinned, "
+        f"{len(models) - len(pinned)} scored, {len(tier.deployments)} keys, "
         f"pool {tier.pool_size})"
     )
 
@@ -188,11 +227,13 @@ def _tier_summary(tier) -> str:
 # score
 # --------------------------------------------------------------------------- #
 def cmd_score(args: argparse.Namespace) -> int:
+    from model_pipeline.capabilities import apply_capabilities
     from model_pipeline.dedup.mappings_csv import low_confidence_rows, read_mappings
     from model_pipeline.emit.html_report import write_html
     from model_pipeline.emit.output import build_payload, write_json, write_markdown
     from model_pipeline.emit.report import write_report
     from model_pipeline.emit.snapshot import read_snapshot
+    from model_pipeline.emit.suggested_router import write_suggested_router_config
     from model_pipeline.limits import apply_limits, fetch_catalog, models_dev_ids
     from model_pipeline.providers.registry import build_adapters
     from model_pipeline.scoring.aa import AaClient
@@ -200,6 +241,7 @@ def cmd_score(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     cfg.pricing.as_of = _as_of_for_run(cfg, args)
+    _print_config_warnings(cfg)
     http = HttpClient()
     recorder = ScrapeRecorder(cfg.raw_dir, cfg.logs_dir)
 
@@ -213,15 +255,26 @@ def cmd_score(args: argparse.Namespace) -> int:
     mappings = read_mappings(mappings_path)
     models = read_snapshot(snapshot_path)
 
-    # A snapshot written before token-limit resolution carries none. Resolve
-    # them here so `score` still emits truthful limits; a re-run of `fetch`
-    # persists them in the snapshot itself.
-    if all(not m.limits_source for m in models):
-        print("  no token limits in the snapshot; resolving from models.dev...")
+    # A snapshot written before token-limit/capability resolution carries none.
+    # Resolve them here so `score` still emits truthful metadata; a re-run of
+    # `fetch` persists them in the snapshot itself.
+    need_limits = any(not m.limits_source for m in models)
+    need_capabilities = any(not m.capabilities_source for m in models)
+    if need_limits or need_capabilities:
+        print("  snapshot lacks limits/capabilities; resolving from models.dev...")
         resolver = fetch_catalog(cfg, http, recorder)
         if resolver is None:
-            print("  warning: models.dev unreachable; token limits will be unresolved")
-        _print_limit_warnings(apply_limits(models, resolver, models_dev_ids(cfg)))
+            print(
+                "  warning: models.dev unreachable; token limits and "
+                "capabilities will be unresolved"
+            )
+        provider_ids = models_dev_ids(cfg)
+        if need_limits:
+            _print_limit_warnings(apply_limits(models, resolver, provider_ids))
+        if need_capabilities:
+            _print_capability_warnings(
+                apply_capabilities(models, resolver, provider_ids)
+            )
 
     canonical = AaClient(cfg, http, recorder).canonical_models()
     adapters = {a.name: a for a in build_adapters(cfg, http, recorder)}
@@ -235,13 +288,20 @@ def cmd_score(args: argparse.Namespace) -> int:
     write_markdown(cfg.output_dir / "tier-output.md", payload)
     write_report(cfg.output_dir / "tier-ranking.md", result, cfg, low)
     write_html(cfg.output_dir / "tier-report.html", result, low)
+    write_suggested_router_config(
+        cfg.output_dir / "suggested_router_config.yaml", cfg
+    )
 
     print(f"score complete: SOTA intelligence = {result.sota_intelligence}")
     _print_pin_warnings(result.pin_warnings)
     for tier in result.tiers:
         print(f"  {_tier_summary(tier)}")
     print(f"  cost methods: {result.cost_methods}")
-    print("  wrote output/tier-output.json, output/tier-output.md, output/tier-ranking.md, output/tier-report.html")
+    print(
+        "  wrote output/tier-output.json, output/tier-output.md, "
+        "output/tier-ranking.md, output/tier-report.html, "
+        "output/suggested_router_config.yaml"
+    )
     print("\nReview output/tier-output.json, then run: populate")
     return 0
 
@@ -341,7 +401,7 @@ def _cmd_populate_interactive(
     isatty=None,
     dry_run: bool = False,
 ) -> int:
-    from model_pipeline.populate.sync import apply_plan, build_plan
+    from model_pipeline.populate.sync import apply_plan, build_plan, param_warnings
 
     _print_target(cfg)
     try:
@@ -365,6 +425,8 @@ def _cmd_populate_interactive(
     _print_server_details(details, models)
     plan = build_plan(payload, models)
     _print_plan(plan)
+    for warning in param_warnings(payload, models):
+        print(f"  warning: {warning}", file=sys.stderr)
 
     if dry_run:
         print("  dry-run: no changes applied.")
@@ -382,6 +444,11 @@ def _cmd_populate_interactive(
     report = apply_plan(client, plan)
     print(f"populate applied: {report.summary()}")
     _print_changes(report.added, report.updated, report.deleted)
+    try:
+        for warning in param_warnings(payload, client.list_models()):
+            print(f"  warning: {warning}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - verification is best-effort
+        print(f"  warning: could not verify supported_openai_params: {exc}", file=sys.stderr)
     for err in report.errors:
         print(f"  ! {err}", file=sys.stderr)
     return 1 if report.errors else 0
@@ -390,14 +457,21 @@ def _cmd_populate_interactive(
 def cmd_populate(args: argparse.Namespace) -> int:
     import json
 
+    from model_pipeline.populate.credentials import resolve_payload_credentials
     from model_pipeline.populate.sync import sync
 
     cfg = load_config(args.config)
+    _print_config_warnings(cfg)
     output_path = cfg.output_dir / "tier-output.json"
     if not output_path.exists():
         print(f"error: {output_path} not found. Run: score", file=sys.stderr)
         return 2
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    try:
+        resolve_payload_credentials(payload, cfg)
+    except RuntimeError as exc:
+        print(f"error: cannot resolve credentials: {exc}", file=sys.stderr)
+        return 2
 
     http = HttpClient()
     try:
@@ -426,6 +500,8 @@ def cmd_populate(args: argparse.Namespace) -> int:
     verb = "would apply" if args.dry_run else "applied"
     print(f"populate {verb}: {report.summary()}")
     _print_changes(report.added, report.updated, report.deleted)
+    for warning in report.warnings:
+        print(f"  warning: {warning}", file=sys.stderr)
     for err in report.errors:
         print(f"  ! {err}", file=sys.stderr)
     return 1 if report.errors else 0

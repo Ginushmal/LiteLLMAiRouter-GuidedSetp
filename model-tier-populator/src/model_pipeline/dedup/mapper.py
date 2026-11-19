@@ -13,15 +13,31 @@ from model_pipeline.models import CanonicalModel, Mapping, RawModel
 
 _MATCH_INSTRUCTIONS = (
     "Which canonical model does this provider model name refer to? Match the "
-    "EXACT model and its exact variant. Do NOT merge variants: different "
-    "parameter sizes (qwen3-4b is not qwen3-26b) and different effort/thinking "
-    "levels (mimo-2.6 is not mimo-2.6-high) are different models. A bare "
-    "provider name maps to the base/default variant, never to a low/high "
-    "sub-variant unless the provider name says so. A serving token "
-    "(fast/highspeed/ultraspeed/turbo) on an otherwise-identical name is the "
-    "SAME model served faster — choose the base model unless the options "
-    "contain a distinct entry for that exact serving variant. If none match "
-    "exactly, choose 'unmapped'."
+    "EXACT model. "
+    # A class/tier token names a DIFFERENT model, not a variant of one. This
+    # used to be absent, so a cheap flash sibling was mapped onto the measured
+    # pro model and silently inherited its intelligence score.
+    "A class or tier token is part of a model's identity, never decoration: "
+    "flash, lite, mini, nano, micro, air, pro, max, ultra, plus, turbo, "
+    "small, medium, large, thinking, reasoning, instruct. "
+    "Never merge across a class token in either direction: a flash model is "
+    "NOT its pro/max sibling (tencent-hy4-flash is not tencent-hy4), and a "
+    "pro model is NOT its flash/lite sibling. The chosen option must carry "
+    "the same class token as the provider name; if no option carries it, "
+    "choose 'unmapped' instead of the nearest model. "
+    "Also never merge different parameter sizes (qwen3-4b is not qwen3-26b) "
+    "or different effort levels (mimo-2.6 is not mimo-2.6-high). "
+    # The old wording licensed the bug: it let any bare name fall back to the
+    # base model, which is exactly the direction that crosses class boundaries.
+    "Only a name with NO class token of its own may map to the base/default "
+    "variant, and only when that action does not add or drop a class token. "
+    "A serving token (fast/highspeed/ultraspeed/turbo/prime) means the same "
+    "model served faster - it never justifies crossing a class boundary. "
+    # Make "unmapped" a first-class answer so an unmeasured sibling does not
+    # borrow a measured one's score.
+    "'unmapped' is a correct and preferred answer. A model that does not "
+    "exist in the options must stay unmapped: inheriting a sibling's "
+    "intelligence score is worse than having none."
 )
 
 

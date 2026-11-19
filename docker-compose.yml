@@ -25,13 +25,16 @@ services:
       # NO_DOCS: "true"
       # NO_REDOC: "true"
       # NO_OPENAPI: "true"
-      COMMANDCODE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
-      OPENCODE_API_KEY: ${OPENCODE_API_KEY:?set it in .env}
-      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:?set it in .env}
+      # Provider keys are NOT injected here. model-tier-populator publishes
+      # every deployment with its provider key as a raw value, and LiteLLM
+      # encrypts it in Postgres with LITELLM_SALT_KEY. Provider keys live in
+      # `.env` for the populator only (COMMANDCODE_APIS / OPENCODE_APIS /
+      # OPEN_ROUTER_APIS) and never reach this container.
+      #
       # The complexity_router (smart-router) needs a Jev classifier. Jev is
-      # reachable through CommandCode's Provider API, so point it there using
-      # the CommandCode key. URL becomes {base}/v1/systemone.
-      TYPESAFE_API_KEY: ${COMMANDCODE_API_KEY:?set it in .env}
+      # reached through CommandCode's Provider API, so it needs one dedicated
+      # key of its own (any CommandCode key). URL becomes {base}/v1/systemone.
+      TYPESAFE_API_KEY: ${JEV_API_KEY:?set it in .env - see the header of this file}
       TYPESAFE_API_BASE: https://api.commandcode.ai/provider
       # Custom cost map hosted in our public repo. Contains pricing keyed by our
       # exact deployment model names (e.g. openai/deepseek/deepseek-v4.1-flash)

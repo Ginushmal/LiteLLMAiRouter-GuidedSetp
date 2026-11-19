@@ -201,16 +201,21 @@ chosen automatically:
 | Mode | When | How |
 |------|------|-----|
 | `aa_pro` | AA Pro token counts available | re-price AA's real per-task tokens |
-| `aa_free` | default (free tier) | back out tokens from AA's `cost_per_task` and prices using `input:output` ratio |
+| `aa_free` | default (free tier) | re-price AA's `cost_per_task` by the ratio of the provider's blended price to AA's |
 | `task_profile` | AA has no data for the model | use the fixed task profile from `config.yaml` |
 
-The free-tier back-out (`aa_free`):
+The free-tier re-price (`aa_free`) scales AA's own cost by how the provider's
+prices differ from AA's — no token counts are invented:
 
 ```
- T_in  = aa_cost_per_task / (p_in_aa + p_out_aa / ratio)
- T_out = T_in / ratio
- cost  = (1-h)*T_in*P_in + h*T_in*P_cache + T_out*P_out      h = cache_hit_rate
+ blend(P) = (1-h)*P_in + h*P_cache + P_out/ratio    h = cache_hit_rate
+ cost     = aa_cost_per_task * blend(provider) / blend(AA)
 ```
+
+AA's published cost already includes its measured cache savings, so the same
+blended weights are applied to AA's prices as to the provider's; when the two
+price sets are identical the ratio is 1 and the cost is exactly AA's number
+(the old token back-out discounted caching twice).
 
 Whenever a provider omits a price (e.g. no cache price), AA's price is used and
 the artifact records it as `aa_fallback` so you can see where each number came from.
@@ -334,10 +339,17 @@ through to the group's configured fallbacks.
 ```
 
 The diff compares `litellm_params` **and** the pipeline-owned `model_info` fields
-(base model, model group, token limits), so a limit change converges on rows that
-already exist. The legacy `POST /model/update` is not used: it writes
-`litellm_params` but ignores `model_info`. PATCH merges per key, so fields the
-pipeline does not own (`member_auto_router`, `db_model`, ...) are never cleared.
+(base model, model group, token limits, capabilities, failover defaults, and the
+credential fingerprint), so a change converges on rows that already exist. The
+legacy `POST /model/update` is not used: it writes `litellm_params` but ignores
+`model_info`. PATCH merges per key, so fields the pipeline does not own
+(`member_auto_router`, `db_model`, ...) are never cleared.
+
+`tier-output.json` never contains a raw API key. Each deployment records
+`provider` + `credential_slot` + a non-secret `api_key_fingerprint`; `populate`
+reads the provider's key list from `.env` and fills `litellm_params.api_key`
+immediately before the management API call. A fingerprint change on a slot
+PATCHes that deployment in place, preserving its id and spend history.
 
 Pricing is injected inline (`input_cost_per_token`, `output_cost_per_token`,
 `cache_read_input_token_cost`, `cache_creation_input_token_cost`), so no custom
@@ -394,8 +406,41 @@ is the "copied value" smell.
 
 **Ids are URL-safe.** Populate addresses a row by id in the URL, so the id must
 be a single path segment: `mp::pro-tier::commandcode::xiaomi-mimo-v2.6-pro`
-(never `...::xiaomi/mimo-v2.6-pro` — the encoded slash cannot be routed). When an
-id changes, the diff applies it as an add/delete pair, adds first.
+(never `...::xiaomi/mimo-v2.6-pro` — the encoded slash cannot be routed). A
+provider's first key keeps this id; additional keys append `key-<n>`
+(`mp::pro-tier::commandcode::key-2::xiaomi-mimo-v2.6-pro`). When an id changes,
+the diff applies it as an add/delete pair, adds first.
+
+### Capability metadata (provider's own entry only)
+
+Capabilities are resolved from the **provider's own** models.dev entry, exact id
+then normalized id. There is deliberately no cross-provider fallback: a model
+can support vision or effort levels on one provider and not another. A missing
+entry leaves the fields unset and records `unresolved`.
+
+| models.dev | LiteLLM `model_info` |
+|---|---|
+| `modalities.input` contains `image` / `pdf` / `audio` / `video` | `supports_vision` / `supports_pdf_input` / `supports_audio_input` / `supports_video_input` |
+| `modalities.input` / `output` | `modalities` (exact lists) |
+| `modalities.output` contains `audio` | `supports_audio_output` (explicit `false` when omitted) |
+| `tool_call` | `supports_function_calling` |
+| `structured_output` | `supports_response_schema` |
+| `reasoning` | `supports_reasoning` |
+| `reasoning_options[type=effort].values` | `reasoning_effort_levels` + seven per-level flags |
+| `attachment` | ignored (too broad to mean a specific media type) |
+
+Unknown fields are omitted; explicit `false` is written only when the provider
+entry declares that modality/capability false. A model whose `modalities.output`
+does not include `text` is excluded from chat tiers (`non_chat_output`).
+
+Reasoning: with published effort values, the pipeline emits the levels plus all
+seven flags. With `reasoning: true` but no effort values, it emits
+`supports_reasoning: true`, omits the flags (a client may apply its own default),
+and records `reasoning_levels_missing`. With `reasoning: false`, it emits an empty
+level list and all flags false.
+
+Artifacts carry `capabilities_source` and `capabilities_flags` per deployment;
+the reports list the flags. See `tier-ranking.md` / `tier-report.html`.
 
 ---
 
@@ -420,6 +465,11 @@ The ones you will actually tune:
 | `exclude.tiers` | per-tier pattern lists (tier display names); a model stays available in the other tiers, and global patterns win |
 | `pins.tiers` | ordered canonical slugs force-included per tier at orders 1..P; bypasses the floor and NMB, consumes top-K slots, exclusions win |
 | `litellm.tier_model_groups` | tier name -> LiteLLM model group |
+| `providers.<name>.api_keys_env` | env var holding a JSON array of keys; one deployment per key, fetch fallback, legacy `api_key_env` still supported |
+| `litellm.num_retries` | retry budget emitted on every deployment (current order) |
+| `litellm.allowed_fails` | per-deployment failures before a key is benched (`0` = first failure) |
+| `litellm.cooldown_time` | seconds a benched key is skipped; exceed the worst-case pool walk |
+| `litellm.timeout` / `lowest_latency_buffer` | values written into the suggested router block |
 
 ---
 
@@ -431,6 +481,7 @@ src/model_pipeline/
   config.py              config.yaml + .env loading
   models.py              RawModel, CanonicalModel, Mapping, Deployment
   limits.py              models.dev catalog -> output limits (+ derived input)
+  capabilities.py        provider-only models.dev entry -> capability metadata
   http.py                HTTP client + scrape forensics (raw + logs)
   pricing.py             context-tier / peak-off-peak normalization
   textutil.py            name normalization, price parsing
@@ -461,9 +512,11 @@ src/model_pipeline/
     output.py            tier-output.json + .md
     snapshot.py          models_snapshot.json
     suggested_config.py  suggested task-profile from provider docs
+    suggested_router.py  suggested router_settings for latency-pool failover
 
   populate/
     litellm_client.py    management API client
+    credentials.py       resolve credential_slot -> raw key at populate time
     sync.py              diff-based, idempotent apply
 ```
 
@@ -472,9 +525,11 @@ src/model_pipeline/
 ## 11. Adding a provider
 
 1. Add a block under `providers:` in `config.yaml` (api base, models URL, pricing
-   URL, key env, `litellm` api bases, `supported_endpoints`).
+   URL, `api_keys_env` key list, `litellm` api bases, `supported_endpoints`).
 2. Write `providers/<name>.py` implementing `ProviderAdapter`
-   (`fetch_models`, `fetch_pricing`, `to_litellm_deployment`).
+   (`fetch_models`, `fetch_pricing`, `to_litellm_deployment`). Use
+   `fetch_with_key_fallback()` for an authenticated model catalog, and pass the
+   `credential` through to `_assemble` in `to_litellm_deployment`.
 3. Register it in `providers/registry.py`.
 
 Everything downstream (dedup, scoring, populate) works unchanged.
@@ -501,7 +556,21 @@ Everything downstream (dedup, scoring, populate) works unchanged.
   a JSON-lines log to `data/logs/`, so a broken parse is diagnosable from the
   artifacts alone.
 - **Idempotency**: `populate` compares only the fields it sets and ignores the
-  masked `api_key`, so a re-run reports `unchanged=N`.
+  masked `api_key`, so a re-run reports `unchanged=N`. The non-secret
+  `api_key_fingerprint` is compared instead, so rotating the key at a slot still
+  PATCHes that deployment in place.
+- **Raw keys never reach artifacts.** `tier-output.json` stores the provider,
+  `credential_slot`, and fingerprint; `populate` reads the key list from `.env`
+  and fills `api_key` immediately before the API call. The HTTP client does not
+  log request bodies.
+- **Capabilities are provider-only.** A missing provider entry leaves capability
+  fields unset and flags `unresolved`; the pipeline never copies another
+  provider's media/reasoning declaration.
+- **Same-order failover needs cooldown.** Emitted `allowed_fails: 0` benches a
+  failed key on its first counted failure; `num_retries` then picks a sibling at
+  the same order. Keep `cooldown_time` longer than
+  `max_keys_per_order × attempts_per_key × timeout`, or the first key can rejoin
+  mid-walk. `enable_weighted_failover` is only for `simple-shuffle`.
 - **Token limits are never invented**: an unmatched model gets no output limit
   and an `unresolved` flag (shown in the run and in `tier-ranking.md`), rather
   than a guessed number. `output == context` catalog entries are flagged as

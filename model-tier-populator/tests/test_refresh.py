@@ -21,7 +21,7 @@ class _StubAdapter:
 
     pcfg = SimpleNamespace(api_key_env="TEST_KEY")
 
-    def to_litellm_deployment(self, model, pricing, model_group, order):
+    def to_litellm_deployment(self, model, pricing, model_group, order, credential=None):
         return {
             "model_name": model_group,
             "litellm_params": {"api_base": "http://stub"},
@@ -115,6 +115,7 @@ def test_score_writes_tier_report_html(tmp_path, monkeypatch):
 
     assert (cfg.output_dir / "tier-output.json").exists()
     assert (cfg.output_dir / "tier-report.html").exists()
+    assert (cfg.output_dir / "suggested_router_config.yaml").exists()
     page = (cfg.output_dir / "tier-report.html").read_text(encoding="utf-8")
     assert "Model pipeline — tier report" in page
     assert "ultra-tier" in page

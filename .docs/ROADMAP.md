@@ -33,6 +33,7 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [x] 3.1 Provider format (`provider/model`, `api_base`, `api_key`, `api_version`)
 - [x] 3.2 OpenAI-compatible custom providers
 - [x] 3.3 `model_name` is just an alias
+- [x] 3.4 Multimodal & reasoning metadata (`supports_vision`, `modalities`, `supports_reasoning`, `reasoning_effort_levels`, per-level flags) — verified LiteLLM 1.108.0
 
 ## Track 4 - Pricing & Cost `[COMPLETE]`
 
@@ -41,6 +42,8 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [x] 4.3 `base_model` for automatic pricing
 - [x] 4.4 Custom pricing per model (in config)
 - [x] 4.5 Self-hosted custom cost map (`custom_cost_map.json`) + diagnostics
+- [x] 4.6 Deployment prices must match the provider's published page — HTML price tables are read by header text (never cell position) and the fetch fails loudly when a price header disappears; verified 2026-11-18 against CommandCode's 7-column page (it dropped `Intelligence`, which had shifted every price by one column)
+- [x] 4.7 Cost-per-task vs Artificial Analysis must reconcile — AA's published cost already includes its measured cache savings, so the free tier is re-priced by the provider/AA **blended-price ratio** (identical prices ⇒ exactly AA's cost, for any cache_hit_rate/ratio), never by token-inverting AA's cost and discounting cache again; verified 2026-11-18 (Kimi $2.24→$3.6812, Qwen $1.53→$3.2681)
 
 ## Track 5 - Routing & Load Balancing `[BASICS DONE]`
 
@@ -50,11 +53,12 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [x] 5.4 Routing groups as callable virtual models
 - [x] 5.5 Deployment `order` + failover
 - [x] 5.6 Fallbacks (different model groups)
-- [x] 5.7 Reliability knobs in action: `num_retries` / `allowed_fails` / `cooldown_time` / `timeout` / retry policy  ← semantics verified against upstream source (failover: retries don't exclude the failed deployment; cooldown is cross-request)
-- [x] 5.8 Configured fallbacks through pre-routing auto-router tiers, including tested `_target_order` workaround (VPS LiteLLM 1.103.0; undocumented)
-- [ ] 5.9 Other strategies hands-on: `least-busy`, `usage-based-routing-v2`, `latency-based-routing`, `cost-based-routing` + `routing_strategy_weight`
+- [x] 5.7 Reliability knobs in action: `num_retries` / `allowed_fails` / `cooldown_time` / `timeout` / retry policy  ← semantics verified against upstream source (a failed deployment is excluded from retries only after cooldown benches it; `allowed_fails` sets that threshold)
+- [x] 5.8 Configured fallbacks through pre-routing auto-router tiers, including tested `_target_order` workaround (VPS LiteLLM 1.103.0; undocumented; 1.108 source suggests the pre-routing fix — retest)
+- [ ] 5.9 Other strategies hands-on: `least-busy`, `usage-based-routing-v2`, `latency-based-routing`, `cost-based-routing` + `routing_strategy_weight` (latency studied; others pending)
 - [ ] 5.10 Context-window fallbacks & content-policy fallbacks
 - [ ] 5.11 Health checks / cooldown behavior under real failures
+- [x] 5.12 Same-order latency pool failover — shared `order` + per-deployment `allowed_fails: 0` + `num_retries` + `retry_policy` for `402`; same-request sibling retry and order escalation verified on LiteLLM 1.108.0
 
 ## Track 6 - Identity: Keys, Teams, Users `[CORE DONE]`
 
@@ -80,7 +84,8 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [x] 7.2 Features overview
 - [ ] 7.3 **Spend reporting** - Usage / Logs views, per-model breakdown
 - [ ] 7.4 Budget durations / reset & budget alerts
-- [ ] 7.5 AI Hub branded page (ENT)
+- [ ] 7.5 AI Hub public page (OSS; `DOCS_DESCRIPTION` branding is ENT)
+- [x] 7.6 **Portal tier map — AI Hub / MCP / Agents / Skills vs SSO** - verified 2026-11-10 against docs + `v1.108.4` source + live calls on our 1.108.0 container (no license): hubs, A2A agents, MCP servers and the skills registry are **OSS**; only SSO beyond 5 billable users is **ENT**; the portable `/skill-hub` API is **main-only** (404 on stable)
 
 ## Track 8 - Proxy API Surface `[NOT STARTED]`
 
@@ -139,9 +144,10 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 
 ## Track 14 - Agent & MCP Gateway `[NOT STARTED]`
 
-- [ ] 14.1 MCP gateway, per-key tool access (tier?)
-- [ ] 14.2 A2A agents (tier?)
-- [ ] 14.3 Agent gateway (ENT - see Enterprise Quickstart)
+- [ ] 14.1 MCP gateway, per-key tool access (OSS - verified v1.108.4; JWT/OAuth2 MCP auth is ENT)
+- [ ] 14.2 A2A agents + Agent Hub (OSS - verified v1.108.4; agent created + made public on our instance without a license)
+- [ ] 14.3 Agent gateway providers - Vertex AI Agent Engine, LangGraph, Bedrock AgentCore, Foundry (OSS - A2A docs carry no Enterprise badge; `agent_endpoints/` has no `premium_user` checks)
+- [ ] 14.4 Skills registry / Claude Code marketplace (`/claude-code/plugins`, `/public/skill_hub`) (OSS - plugin created unlicensed on 1.108.0); portable `/skill-hub` Skills Hub API is **main-only**, not in v1.108.x
 
 ## Track 15 - Production & Security `[PARTIAL]`
 
@@ -151,7 +157,7 @@ The master checklist of everything we intend to study about LiteLLM. It is hiera
 - [x] 15.4 Kubernetes deployment (key parts)
 - [ ] 15.5 Hands-on Helm/K8s deploy, `DISABLE_SCHEMA_UPDATE`, multi-pod migrations
 - [ ] 15.6 High availability: multi-instance + shared DB/Redis
-- [ ] 15.7 SSO (OIDC/SAML) for Admin UI (ENT - free for up to 5 users)
+- [ ] 15.7 SSO (OIDC/SAML) for Admin UI (OSS up to 5 billable users, ENT above - verified v1.108.4)
 - [ ] 15.8 JWT / token auth (ENT)
 - [ ] 15.9 Audit logs (ENT)
 - [ ] 15.10 IP allowlists + public/private route controls (ENT)
