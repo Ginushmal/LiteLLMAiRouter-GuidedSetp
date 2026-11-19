@@ -387,6 +387,7 @@ exclude:
   patterns:
     # - "contributor" # e.g. Meta "Muse Spark ... Contributor" (trains on your prompts)
     # - "muse-spark-1.3-contributor"   # or an exact provider model id / slug
+    # - "iceman"                       # OpenCode Iceman Contributor Free gate
     # - "free"                         # e.g. drop every free/promo model
     # OpenRouter's router entries (free/auto/fusion/pareto/bodybuilder and the
     # Jev router) are load balancers or task routers, not models: no AA identity
@@ -555,7 +556,8 @@ providers:
     models_url: https://opencode.ai/inference/go/v1/models
     # JSON array in one env var; see the commandcode comment above.
     api_keys_env: OPENCODE_APIS
-    # Pricing source (Go plan docs table) and per-model endpoint table.
+    # Pricing source (Go plan docs table). The live /models response is the
+    # catalog; do not synthesize models from the docs endpoint table.
     pricing_url: https://opencode.ai/v2/docs/console/go
     # models.dev catalog provider id(s) for this provider. `opencode-go` is the
     # Go plan's own catalog entry; plain `opencode` is its fallback.
@@ -576,10 +578,15 @@ providers:
     # VALUES: any of "chat" (OpenAI /chat/completions), "messages" (Anthropic
     # /v1/messages), "responses" (OpenAI /responses), "google"
     # (generateContent-style). Omitted/empty = every model kept. A model whose
-    # protocol is NOT listed is dropped from the tiers — never silently routed
-    # as chat.
-    # "responses" (grok/gpt-luna/muse) and "google" (gemini) are deferred:
-    # they need extra LiteLLM wiring, so those models are excluded for now.
+    # deployment protocol is NOT listed is dropped from the tiers — never
+    # silently routed as chat. For OpenCode, native responses/google models
+    # are translated to the chat deployment protocol by the gateway, so they
+    # pass with this list; messages-native models keep the native Anthropic
+    # path. Deprecated models absent from /models are not synthesized.
+    #
+    # Privacy gates: Muse Spark 1.2/1.3 and Iceman Contributor Free return 400
+    # until "Allow paid endpoints that train on request data" is enabled. If it
+    # is off, add "contributor"/"iceman" to exclude.patterns.
     supported_endpoints: ["chat", "messages"]
 
   openrouter:

@@ -28,6 +28,8 @@ def models_to_json(models: list[RawModel]) -> list[dict]:
             "capabilities_source": m.capabilities_source,
             "capabilities_flags": m.capabilities_flags,
             "supported_endpoints": m.supported_endpoints,
+            "native_protocol": m.native_protocol,
+            "canonical_hint": m.canonical_hint,
             "pricing": (m.pricing.as_dict() if m.pricing else None),
         }
         for m in models
@@ -64,6 +66,8 @@ def models_from_json(rows: list[dict]) -> list[RawModel]:
                 capabilities=r.get("capabilities", {}) or {},
                 capabilities_source=r.get("capabilities_source", ""),
                 capabilities_flags=r.get("capabilities_flags", []) or [],
+                native_protocol=r.get("native_protocol", ""),
+                canonical_hint=r.get("canonical_hint", ""),
             )
         )
     return models

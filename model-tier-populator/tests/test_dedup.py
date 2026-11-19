@@ -157,6 +157,73 @@ def test_mapper_records_a_free_plan_variant_as_an_exact_match():
     assert mappings[0].model_id == "minimax/minimax-m3.1-flash:free"
 
 
+def test_mapper_tries_canonical_hint_before_display_name():
+    models = [
+        RawModel(
+            provider="opencode",
+            model_id="deepseek-v4.1-flash",
+            display_name="DeepSeek V4.1 Flash",
+            canonical_hint="deepseek/deepseek-v4.1-flash-1017",
+        )
+    ]
+    canonical = [
+        CanonicalModel(slug="deepseek-v4-1-flash", name="DeepSeek V4.1 Flash (Max)"),
+        CanonicalModel(
+            slug="deepseek-v4-1-flash-1017",
+            name="DeepSeek V4.1 Flash 1017 (Max)",
+        ),
+    ]
+
+    class _NoJev:
+        def choose(self, *args, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("an exact hint match must not call Jev")
+
+    cfg = SimpleNamespace(
+        dedup=DedupConfig(strip_suffixes=[], speed_suffixes=[], effort_tokens=[]),
+        jev=SimpleNamespace(candidate_shortlist_size=5, review_confidence_threshold=0.7),
+    )
+
+    mappings = map_models(models, canonical, cfg, _NoJev())
+
+    assert len(mappings) == 1
+    assert mappings[0].method == "exact"
+    assert mappings[0].canonical_slug == "deepseek-v4-1-flash-1017"
+    assert mappings[0].canonical_name == "DeepSeek V4.1 Flash 1017 (Max)"
+
+
+def test_mapper_ignores_unknown_canonical_hint_and_falls_back():
+    models = [
+        RawModel(
+            provider="opencode",
+            model_id="deepseek-v4.1-flash",
+            display_name="DeepSeek V4.1 Flash",
+            canonical_hint="nonexistent/hint",
+        )
+    ]
+    canonical = [
+        CanonicalModel(slug="deepseek-v4-1-flash", name="DeepSeek V4.1 Flash (Max)"),
+        CanonicalModel(
+            slug="deepseek-v4-1-flash-1017",
+            name="DeepSeek V4.1 Flash 1017 (Max)",
+        ),
+    ]
+
+    class _NoJev:
+        def choose(self, *args, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("a display-name exact match must not call Jev")
+
+    cfg = SimpleNamespace(
+        dedup=DedupConfig(strip_suffixes=[], speed_suffixes=[], effort_tokens=[]),
+        jev=SimpleNamespace(candidate_shortlist_size=5, review_confidence_threshold=0.7),
+    )
+
+    mappings = map_models(models, canonical, cfg, _NoJev())
+
+    assert len(mappings) == 1
+    assert mappings[0].method == "exact"
+    assert mappings[0].canonical_slug == "deepseek-v4-1-flash"
+
+
 # -- mappings CSV ---------------------------------------------------------
 def test_mappings_csv_roundtrip_and_override(tmp_path: Path):
     maps = [

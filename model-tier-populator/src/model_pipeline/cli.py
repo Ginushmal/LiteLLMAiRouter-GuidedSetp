@@ -12,6 +12,7 @@ Each phase can be re-run on its own. `fetch` and `score` halt for human review.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import Counter
 from urllib.parse import urlparse
@@ -130,6 +131,29 @@ def _print_plan_warnings(adapter) -> None:
             print(f"    … and {len(unverified) - 10} more")
 
 
+def _census_line(census) -> str:
+    """One-line provider coverage summary; drops are named, never silent."""
+    parts = [f"{census.advertised} advertised", f"{census.extracted} extracted"]
+    if census.unsupported_protocol:
+        parts.append(f"{len(census.unsupported_protocol)} unsupported protocol")
+    if census.no_pricing:
+        parts.append(f"{len(census.no_pricing)} missing pricing")
+    return ", ".join(parts)
+
+
+def _print_census(census) -> None:
+    print(f"  {census.provider}: {_census_line(census)}")
+    for label, items in (
+        ("unsupported protocol", census.unsupported_protocol),
+        ("missing pricing", census.no_pricing),
+    ):
+        if not items:
+            continue
+        print(f"    {label}: {', '.join(items[:10])}")
+        if len(items) > 10:
+            print(f"    … and {len(items) - 10} more")
+
+
 # --------------------------------------------------------------------------- #
 # fetch
 # --------------------------------------------------------------------------- #
@@ -157,9 +181,18 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     models = []
     for adapter in adapters:
         fetched = adapter.fetch_all()
-        print(f"  {adapter.name}: {len(fetched)} servable models")
+        if adapter.last_census is not None:
+            _print_census(adapter.last_census)
+        else:
+            print(f"  {adapter.name}: {len(fetched)} servable models")
         _print_plan_warnings(adapter)
         models.extend(fetched)
+
+    census_rows = [a.last_census.as_dict() for a in adapters if a.last_census]
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.output_dir / "fetch-census.json").write_text(
+        json.dumps(census_rows, indent=2) + "\n", encoding="utf-8"
+    )
 
     print("  fetching token limits and capabilities from models.dev...")
     resolver = fetch_catalog(cfg, http, recorder)
@@ -194,7 +227,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     low = low_confidence_rows(mappings)
     mapped = sum(1 for m in mappings if m.effective_slug)
     print(f"\nfetch complete: {len(mappings)} rows, {mapped} mapped.")
-    print("  wrote output/mappings.csv, output/models_snapshot.json, output/suggested_config.yaml")
+    print(
+        "  wrote output/mappings.csv, output/models_snapshot.json, "
+        "output/suggested_config.yaml, output/fetch-census.json"
+    )
     if low:
         print(f"\nHALT: {len(low)} low-confidence row(s) need review:")
         for m in low[:15]:

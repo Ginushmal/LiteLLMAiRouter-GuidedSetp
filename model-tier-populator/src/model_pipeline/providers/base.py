@@ -13,6 +13,7 @@ auth headers). Everything downstream works on the normalized models.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
@@ -25,6 +26,26 @@ from model_pipeline.textutil import normkey
 # Statuses that mean "try the next API key". 400/404 are request/endpoint
 # problems, not key problems, so they stay terminal.
 _KEY_FALLBACK_STATUSES = frozenset({401, 402, 403, 408, 409, 429})
+
+
+@dataclass
+class FetchCensus:
+    """What a provider advertised vs what survived the pre-dedup filters."""
+
+    provider: str
+    advertised: int = 0
+    extracted: int = 0
+    unsupported_protocol: list[str] = field(default_factory=list)
+    no_pricing: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        return {
+            "provider": self.provider,
+            "advertised": self.advertised,
+            "extracted": self.extracted,
+            "unsupported_protocol": self.unsupported_protocol,
+            "no_pricing": self.no_pricing,
+        }
 
 
 class ProviderAdapter(ABC):
@@ -47,6 +68,8 @@ class ProviderAdapter(ABC):
         # Kept for adapters/tests that reference a single key; the fetch path
         # always uses ``self.credentials`` so the list is authoritative.
         self.api_key = self.credentials[0].value if self.credentials else ""
+        # Populated by fetch_all(); consumed immediately by the fetch CLI.
+        self.last_census: FetchCensus | None = None
 
     # -- fetch forensics ---------------------------------------------------
     def _record(
@@ -132,8 +155,10 @@ class ProviderAdapter(ABC):
     def available(self, model: RawModel) -> bool:
         """Whether we can serve this model given the protocols we support.
 
-        Models whose endpoint protocol is deferred (OpenCode responses/google)
-        are excluded here rather than silently mis-routed.
+        Adapters that translate a native protocol to a supported deployment
+        protocol (OpenCode responses/google -> chat) set ``endpoint_type`` to
+        the deployment protocol, so this filter only sees protocols the adapter
+        can actually emit.
         """
         supported = self.pcfg.supported_endpoints
         if not supported:
@@ -155,13 +180,20 @@ class ProviderAdapter(ABC):
     def fetch_all(self) -> list[RawModel]:
         models = self.fetch_models()
         pricing = self.fetch_pricing()
+        census = FetchCensus(provider=self.name, advertised=len(models))
         out: list[RawModel] = []
         for m in models:
             m.pricing = pricing.get(normkey(m.display_name)) or pricing.get(
                 normkey(m.model_id)
             )
-            if m.pricing is not None and self.available(m):
+            if m.pricing is None:
+                census.no_pricing.append(m.model_id)
+            elif not self.available(m):
+                census.unsupported_protocol.append(m.model_id)
+            else:
                 out.append(m)
+        census.extracted = len(out)
+        self.last_census = census
         return out
 
     # -- shared deployment assembly ---------------------------------------

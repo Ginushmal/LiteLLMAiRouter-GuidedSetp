@@ -108,7 +108,12 @@ class ResolvedPricing:
 
 @dataclass
 class RawModel:
-    """A model as advertised by one provider, before canonical mapping."""
+    """A model as advertised by one provider, before canonical mapping.
+
+    ``endpoint_type`` is the protocol used for the LiteLLM deployment.
+    ``native_protocol`` records the protocol the provider itself advertises;
+    they differ when the provider's gateway translates a native protocol.
+    """
 
     provider: str
     model_id: str
@@ -123,13 +128,18 @@ class RawModel:
     # None when the provider publishes no context window.
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
-    limits_source: str = ""  # e.g. "models.dev:commandcode" / "models.dev-fallback:xiaomi"
+    limits_source: str = ""  # e.g. "provider:opencode" / "models.dev:commandcode"
     limits_flags: list[str] = field(default_factory=list)  # "unresolved", "output_equals_context", ...
     # Capability fields ready to merge into LiteLLM's model_info. Empty means
     # the provider's models.dev entry did not declare them (never invented).
     capabilities: dict[str, Any] = field(default_factory=dict)
     capabilities_source: str = ""
     capabilities_flags: list[str] = field(default_factory=list)
+    # Native API advertised by the provider (chat/messages/responses/google).
+    # ``endpoint_type`` is the deployment protocol and may differ.
+    native_protocol: str = ""
+    # Provider-supplied canonical identifier, tried before display name/model id.
+    canonical_hint: str = ""
 
 
 @dataclass

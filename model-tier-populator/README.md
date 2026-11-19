@@ -175,6 +175,7 @@ between machines.
 |------|------------|
 | `mappings.csv` | provider model -> canonical model, with method + confidence + `override` column |
 | `models_snapshot.json` | fetched provider models + normalized prices (lets `score` run offline) |
+| `fetch-census.json` | per-provider advertised/extracted counts and the model IDs dropped before dedup |
 | `aa_snapshot.json` | cached Artificial Analysis models list |
 | `suggested_config.yaml` | task-profile values suggested from provider docs (advisory) |
 | `tier-output.json` | **the tier list** — self-contained; all `populate` needs. Each deployment carries its credential slot/fingerprint, capability source/flags, and full LiteLLM payload |
@@ -229,11 +230,14 @@ never `peak_windows_utc`; context-threshold prices still collapse via
 | Provider | chat | messages | responses | google |
 |----------|:----:|:--------:|:---------:|:------:|
 | CommandCode | yes | yes | — | — |
-| OpenCode | yes | yes | deferred | deferred |
+| OpenCode | yes | yes | translated | translated |
 | OpenRouter | yes | — | — | — |
 
-"Deferred" protocols (OpenCode `responses`/`google`) need extra LiteLLM wiring,
-so those models are excluded from tiers for now.
+OpenCode's gateway serves every text model through every API: `responses`- and
+`google`-native models are deployed through the `chat/completions` path, so they
+are included instead of deferred. `messages`-native models keep the native
+Anthropic path. The live `/models` response is the catalog; deprecated models
+that remain in the docs table are not synthesized.
 
 CommandCode's Provider API lists every model the gateway can serve, including
 premium ones a lower subscription plan cannot use (e.g. GPT-6.1 Terra needs Pro).

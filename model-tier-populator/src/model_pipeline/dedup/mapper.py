@@ -112,8 +112,14 @@ def map_models(
                 )
             continue
 
-        # 1. Exact match (100% confidence, no classifier call).
-        exact = index.exact(m.display_name) or index.exact(m.model_id)
+        # 1. Exact match (100% confidence, no classifier call). The provider's
+        # own canonical id wins because it carries the dated/serving variant.
+        hint = getattr(m, "canonical_hint", "")
+        exact = (
+            (index.exact(hint) if hint else None)
+            or index.exact(m.display_name)
+            or index.exact(m.model_id)
+        )
         if exact is not None:
             mappings.append(
                 Mapping(

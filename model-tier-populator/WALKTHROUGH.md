@@ -168,6 +168,12 @@ merged:
 Exact matching is by **AA slug** (unique per variant); the strict variant check
 filters the candidate list handed to Jev.
 
+When a provider publishes its own canonical id (OpenCode's `/models`
+`canonical_id`), the mapper tries that hint before the display name and model
+id. This separates dated variants such as `deepseek-v4-1-flash-1017` from the
+older `deepseek-v4-1-flash`; an unmatched hint falls back to the normal exact
+match and never fails the run.
+
 **The review gate.** Every mapping is written to `mappings.csv` with a method and
 confidence. Low-confidence rows are flagged; you can type a canonical slug into
 the `override` column and `score` will honour it.
@@ -366,18 +372,17 @@ keeps returning the diff without prompting.
 
 ---
 
-## 8. Token limits (models.dev)
+## 8. Token limits (provider first, models.dev fallback)
 
-**Why.** Providers publish a *context window* and nothing else. When LiteLLM
-discovers a model's limits itself, a missing output limit is filled with that
-context window — so a 1,050,000-token context becomes a 1,050,000-token
-*completion* cap. Clients (OpenCode's model discovery) read that from
-`/v1/model/info` and ask for e.g. 256,000 completion tokens, which every real
-model rejects. The whole fallback chain fails, and the tier looks down.
+**Why.** When LiteLLM discovers a model's limits itself, a missing output limit
+is filled with the context window — so a 1,050,000-token context becomes a
+1,050,000-token *completion* cap. Clients (OpenCode's model discovery) read that
+from `/v1/model/info` and ask for e.g. 256,000 completion tokens, which every
+real model rejects. The whole fallback chain fails, and the tier looks down.
 
 ```
-fetch:   provider /models ---+                    +--> output limit
-                              +--> models.dev -----+
+fetch:   provider /models ---+--> context window
+                              +--> output limit (provider; models.dev fallback)
                               |
                               +--> input = context - output
                                          |
@@ -388,14 +393,17 @@ populate: PATCH /model/{id}/update   (POST /model/update ignores model_info)
 
 | Value | Source | Notes |
 |-------|--------|-------|
-| context window | the provider's `/models` API (`context_length`) | authoritative |
-| output limit | models.dev catalog (`limit.output`) | provider entry first, then a normalized-id match across the catalog |
+| context window | the provider's `/models` API (`context_length` or `limit.context`) | authoritative |
+| output limit | the provider's `/models` API (`limit.output`) first; models.dev fallback | models.dev is used only when the provider publishes none |
 | input limit | derived `context - output` | never invented |
 
-**Never invented.** No catalog match → the value stays unset and the model is
-flagged `unresolved` (printed by the run and listed in `tier-ranking.md`).
-Catalog entries whose `output` equals their own `context` are flagged too — that
-is the "copied value" smell.
+When the provider publishes an output limit, `limits_source` records
+`provider:<name>`; models.dev entries use their existing `models.dev:*` source.
+
+**Never invented.** No provider or catalog match → the value stays unset and the
+model is flagged `unresolved` (printed by the run and listed in
+`tier-ranking.md`). Provider or catalog values whose `output` equals their own
+`context` are flagged too — that is the "copied value" smell.
 
 | Artifact | Carries |
 |----------|---------|
@@ -548,8 +556,19 @@ Everything downstream (dedup, scoring, populate) works unchanged.
   fails loudly instead of shipping models the plan cannot use.
 - **OpenCode needs `x-opencode-session`** on every request — injected via
   `extra_headers` (one static value for gateway traffic).
-- **OpenCode `responses`/`google` models are deferred** (grok / gpt-luna / muse /
-  gemini) — they need Responses-API / Gemini wiring, so they are excluded.
+- **OpenCode translates native protocols.** `/models` reports the native API
+  (`responses`, `messages`, `generate-content`, `chat-completions`), but the
+  gateway serves every text model through every API. The adapter deploys
+  `messages`-native models natively and translates `responses`/`google` to
+  `chat/completions`. The docs page is pricing-only; two deprecated models
+  (`mimo-v2.5`, `mimo-v2.5-pro`) are absent from `/models` and are not
+  synthesized.
+- **OpenCode privacy gates.** Muse Spark 1.2/1.3 and Iceman Contributor Free
+  return 400 until "Allow paid endpoints that train on request data" is on.
+  Exclude them with `exclude.patterns` when the gate is off.
+- **Fetch census.** `fetch` writes `output/fetch-census.json` with per-provider
+  advertised/extracted counts and the model IDs dropped for unsupported protocol
+  or missing pricing.
 - **Artificial Analysis free tier** is at `/api/v2/language/models/free`
   (the plain `/language/models` requires Pro). Snapshot is cached; limit 100/day.
 - **Scraping forensics**: every fetch dumps the raw HTML/JSON to `data/raw/` and

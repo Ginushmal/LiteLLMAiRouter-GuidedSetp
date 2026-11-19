@@ -1,9 +1,13 @@
 """OpenCode Go (opencode.ai/inference/go/v1) adapter.
 
-The /models endpoint returns only IDs, so the docs page supplies two things:
-  * an endpoint table (Model | Model ID | Endpoint) giving each model's
-    protocol (responses / messages / chat / google), and
-  * a pricing table (Model | Input | Output | Cached Read | Cached Write).
+The /models endpoint is the live catalog: each entry carries the display name,
+canonical id, native API map, and token limits. The docs page supplies the
+pricing table (Model | Input | Output | Cached Read | Cached Write).
+
+Native protocols are metadata only. OpenCode's gateway translates every text
+model to every API, so models whose native protocol is responses or Google
+generateContent are deployed through chat/completions; messages-native models
+keep the native Anthropic path.
 
 Pricing rows encode tiers in the model name:
   * context tiers:  "Qwen3.7 Plus (\u2264 256K tokens)" + "(\u003e 256K tokens)"
@@ -39,16 +43,25 @@ _CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.S)
 _SUFFIX_RE = re.compile(r"^(.*?)\s*\((.+)\)\s*$")
 
 
-def _endpoint_type(url: str) -> str:
-    if "/responses" in url:
-        return ENDPOINT_RESPONSES
-    if "/messages" in url:
+def _native_protocol(api: dict | None) -> str:
+    """The protocol the provider advertises for a model, from its ``api`` map."""
+    api = api or {}
+    if "messages" in api:
         return ENDPOINT_MESSAGES
-    if "/chat/completions" in url:
-        return ENDPOINT_CHAT
-    if re.search(r"/v1/models/[^/]+$", url):
+    if "responses" in api:
+        return ENDPOINT_RESPONSES
+    if "generate-content" in api:
         return ENDPOINT_GOOGLE
     return ENDPOINT_CHAT
+
+
+def _deploy_endpoint(native: str) -> str:
+    """The protocol used for the LiteLLM deployment.
+
+    OpenCode's gateway translates every text model to every API, so only the
+    native Anthropic path is kept; every other native protocol uses chat.
+    """
+    return ENDPOINT_MESSAGES if native == ENDPOINT_MESSAGES else ENDPOINT_CHAT
 
 
 def _split_suffix(name: str) -> tuple[str, str]:
@@ -81,16 +94,21 @@ class OpenCodeAdapter(ProviderAdapter):
             self._record(self.pcfg.models_url, "GET", resp=resp, error=str(exc))
             raise
 
-        endpoints = parse_opencode_endpoints(self._docs())
         models: list[RawModel] = []
         for m in data.get("data", []):
             mid = m["id"]
+            limit = m.get("limit") or {}
+            native = _native_protocol(m.get("api"))
             models.append(
                 RawModel(
                     provider=self.name,
                     model_id=mid,
-                    display_name=mid,
-                    endpoint_type=endpoints.get(normkey(mid), ENDPOINT_CHAT),
+                    display_name=m.get("name") or mid,
+                    endpoint_type=_deploy_endpoint(native),
+                    context_tokens=limit.get("context"),
+                    output_tokens=limit.get("output"),
+                    native_protocol=native,
+                    canonical_hint=m.get("canonical_id") or "",
                 )
             )
         self._record(self.pcfg.models_url, "GET", resp=resp, parsed_count=len(models))
@@ -138,23 +156,6 @@ class OpenCodeAdapter(ProviderAdapter):
             api_base,
             credential,
         )
-
-
-def parse_opencode_endpoints(html: str) -> dict[str, str]:
-    """normkey(model_id) -> endpoint_type from the docs endpoint table."""
-    result: dict[str, str] = {}
-    for table in _TABLE_RE.findall(html or ""):
-        if "inference/go" not in table:
-            continue
-        for row in _ROW_RE.finditer(table):
-            cells = [clean_text(c) for c in _CELL_RE.findall(row.group(0))]
-            if len(cells) < 3 or cells[0].lower() == "model":
-                continue
-            model_id = cells[1]
-            endpoint_url = cells[2]
-            result[normkey(model_id)] = _endpoint_type(endpoint_url)
-            result.setdefault(normkey(cells[0]), _endpoint_type(endpoint_url))
-    return result
 
 
 def parse_opencode_pricing(

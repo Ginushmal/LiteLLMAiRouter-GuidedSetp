@@ -267,9 +267,9 @@ def apply_limits(
 ) -> dict[str, list[str]]:
     """Annotate each model with resolved limits; return ``provider:model -> flags``.
 
-    ``input_tokens`` is derived from the provider's context window and the
-    resolved output limit. With no provider context (OpenCode publishes none)
-    the input limit stays unknown rather than guessed.
+    A provider-published output limit wins; models.dev is the fallback. The
+    input limit is derived from the provider's context window and the resolved
+    output limit, and stays unknown when the provider publishes no context.
     """
     flagged: dict[str, list[str]] = {}
     for model in models:
@@ -279,16 +279,26 @@ def apply_limits(
             if resolver is not None
             else ResolvedLimits(flags=[FLAG_UNRESOLVED])
         )
-        model.output_tokens = limits.output
+        provider_output = model.output_tokens
+        if provider_output is not None:
+            model.output_tokens = provider_output
+            model.limits_source = f"provider:{model.provider}"
+            model.limits_flags = []
+        else:
+            model.output_tokens = limits.output
+            model.limits_source = limits.source
+            model.limits_flags = list(limits.flags)
         model.input_tokens = None
-        model.limits_source = limits.source
-        model.limits_flags = list(limits.flags)
 
-        if limits.output is not None and model.context_tokens is not None:
-            if limits.output >= model.context_tokens:
-                model.limits_flags.append(FLAG_OUTPUT_NOT_BELOW_CONTEXT)
+        if model.output_tokens is not None and model.context_tokens is not None:
+            if model.output_tokens > model.context_tokens:
+                if FLAG_OUTPUT_NOT_BELOW_CONTEXT not in model.limits_flags:
+                    model.limits_flags.append(FLAG_OUTPUT_NOT_BELOW_CONTEXT)
+            elif model.output_tokens == model.context_tokens:
+                if FLAG_OUTPUT_EQUALS_CONTEXT not in model.limits_flags:
+                    model.limits_flags.append(FLAG_OUTPUT_EQUALS_CONTEXT)
             else:
-                model.input_tokens = model.context_tokens - limits.output
+                model.input_tokens = model.context_tokens - model.output_tokens
 
         if model.limits_flags:
             flagged[f"{model.provider}:{model.model_id}"] = model.limits_flags

@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 from model_pipeline.cli import (
     _as_of_for_run,
+    _census_line,
     _print_pin_warnings,
     _tier_summary,
     build_parser,
 )
+from model_pipeline.providers.base import FetchCensus
 
 
 def test_pin_warnings_go_to_stderr(capsys):
@@ -37,6 +39,26 @@ def test_tier_summary_separates_pinned_and_scored_deployments():
     assert "2 pinned" in summary
     assert "1 scored" in summary
     assert "pool 7" in summary
+
+
+def test_census_line_reports_zero_drops():
+    line = _census_line(FetchCensus(provider="opencode", advertised=30, extracted=30))
+    assert line == "30 advertised, 30 extracted"
+
+
+def test_census_line_reports_drops():
+    line = _census_line(
+        FetchCensus(
+            provider="opencode",
+            advertised=3,
+            extracted=1,
+            unsupported_protocol=["b"],
+            no_pricing=["c"],
+        )
+    )
+    assert "3 advertised, 1 extracted" in line
+    assert "1 unsupported protocol" in line
+    assert "1 missing pricing" in line
 
 
 # -- --as-of precedence ---------------------------------------------------

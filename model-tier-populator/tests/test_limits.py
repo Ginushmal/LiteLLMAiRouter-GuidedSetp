@@ -118,13 +118,58 @@ def test_apply_limits_derives_input_from_context_minus_output():
 
 
 def test_apply_limits_leaves_input_unknown_without_provider_context():
-    # OpenCode publishes no context window: the output cap is still truthful,
-    # but the input limit must stay unset rather than be guessed.
+    # A provider that publishes no context window: the output cap is still
+    # truthful, but the input limit must stay unset rather than be guessed.
     model = _model()
     apply_limits([model], _resolver(), {"ours": ["ours"]})
     assert model.output_tokens == 128000
     assert model.input_tokens is None
     assert model.limits_flags == []
+
+
+def test_apply_limits_keeps_provider_output_and_derives_input():
+    model = _model(context_tokens=1000, output_tokens=200)
+    flagged = apply_limits([model], _resolver(), {"ours": ["ours"]})
+    assert (model.output_tokens, model.input_tokens) == (200, 800)
+    assert model.limits_source == "provider:ours"
+    assert flagged == {}
+
+
+def test_apply_limits_provider_output_wins_over_models_dev():
+    model = _model(context_tokens=1050000, output_tokens=1000)
+    apply_limits([model], _resolver(), {"ours": ["ours"]})
+    assert model.output_tokens == 1000
+    assert model.input_tokens == 1049000
+    assert model.limits_source == "provider:ours"
+
+
+def test_apply_limits_without_catalog_but_with_provider_output():
+    model = _model(context_tokens=2000, output_tokens=500)
+    flagged = apply_limits([model], None, {"ours": ["ours"]})
+    assert (model.output_tokens, model.input_tokens) == (500, 1500)
+    assert model.limits_source == "provider:ours"
+    assert flagged == {}
+
+
+def test_apply_limits_flags_provider_output_equal_to_context_once():
+    model = _model(context_tokens=4096, output_tokens=4096)
+    flagged = apply_limits([model], _resolver(), {"ours": ["ours"]})
+    assert model.input_tokens is None
+    assert model.limits_flags == [FLAG_OUTPUT_EQUALS_CONTEXT]
+    assert flagged == {"ours:gpt-6-luna": [FLAG_OUTPUT_EQUALS_CONTEXT]}
+
+
+def test_apply_limits_flags_provider_output_above_context():
+    model = _model(context_tokens=1000, output_tokens=2000)
+    apply_limits([model], _resolver(), {"ours": ["ours"]})
+    assert model.input_tokens is None
+    assert model.limits_flags == [FLAG_OUTPUT_NOT_BELOW_CONTEXT]
+
+
+def test_apply_limits_dedupes_models_dev_equal_context_flag():
+    model = _model(model_id="copied-model", context_tokens=4096)
+    apply_limits([model], _resolver(), {"ours": ["ours"]})
+    assert model.limits_flags == [FLAG_OUTPUT_EQUALS_CONTEXT]
 
 
 def test_apply_limits_flags_output_not_below_context():

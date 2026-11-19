@@ -43,7 +43,7 @@ from model_pipeline.pricing import (
     collapse_tiers,
     days_from_names,
 )
-from model_pipeline.providers.base import ProviderAdapter
+from model_pipeline.providers.base import FetchCensus, ProviderAdapter
 from model_pipeline.textutil import normkey
 
 # ResolvedPricing component -> OpenRouter pricing key.
@@ -184,12 +184,18 @@ class OpenRouterAdapter(ProviderAdapter):
         and its paid sibling normalize to the same ``normkey(model_id)``, so a
         free row could inherit the paid price.
         """
+        entries = self._entries()
+        census = FetchCensus(provider=self.name, advertised=len(entries))
         models: list[RawModel] = []
-        for entry in self._entries():
+        for entry in entries:
             model = self._model_from(entry)
             model.pricing = self._priced(entry)
             if self.available(model):
                 models.append(model)
+            else:
+                census.unsupported_protocol.append(model.model_id)
+        census.extracted = len(models)
+        self.last_census = census
         return models
 
     def to_litellm_deployment(
