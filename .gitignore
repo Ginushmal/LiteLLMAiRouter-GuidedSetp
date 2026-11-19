@@ -13,3 +13,4 @@ redis_data/
 Thumbs.db
 test_keys.txt
 
+/.tmp
